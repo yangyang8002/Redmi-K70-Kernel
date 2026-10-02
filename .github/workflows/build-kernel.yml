@@ -172,7 +172,7 @@ jobs:
           echo "=== notable options ==="
           grep -E 'CONFIG_(LTO|CFI|SHADOW_CALL_STACK|MODVERSIONS|MODULE_SIG|WERROR|DEBUG_INFO_BTF)' out/.config | grep -v 'is not set' || true
 
-      - name: Apply LTO mode (default: ThinLTO)
+      - name: 'Apply LTO mode (default ThinLTO)'
         env:
           LTO_MODE: ${{ inputs.lto || 'thin' }}
         run: |
