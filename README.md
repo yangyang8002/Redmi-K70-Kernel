@@ -19,6 +19,9 @@
 
 工具链：优先使用内核树 `build.config.constants` 中固定的 AOSP 官方预编译 **clang r450784e**；下载失败时自动回退到 Ubuntu 仓库 clang（也可用 Run workflow 输入强制指定）。
 
+- **LTO 模式**：默认 **ThinLTO**（`CONFIG_LTO_CLANG_THIN=y`，内存占用与耗时更低）；官方 `gki_defconfig` 使用 `CONFIG_LTO_CLANG_FULL=y`，如需完全一致可在 Run workflow 时选择 `full`（或 `none`）。
+- 构建前会自动清理小米开源树中的**悬空 Kconfig source 引用**（如 `drivers/misc/hwid/Kconfig`——对应目录未随源码开源，直接构建会报 `can't open file`）。
+
 ## 产物（Actions Artifacts）
 
 | 文件 | 说明 |
@@ -34,7 +37,7 @@
 ## 使用
 
 - **自动触发**：推送到 `main` 分支即触发构建
-- **手动触发**：Actions → *Build Redmi K70 Kernel* → *Run workflow*（可选源码分支、工具链）
+- **手动触发**：Actions → *Build Redmi K70 Kernel* → *Run workflow*（可选源码分支、工具链、LTO 模式）
 
 ## 说明与注意
 

@@ -17,6 +17,15 @@ on:
           - auto
           - aosp
           - apt
+      lto:
+        description: 'LTO mode (thin: lower memory/build time; official gki_defconfig uses full)'
+        required: false
+        default: 'thin'
+        type: choice
+        options:
+          - thin
+          - full
+          - none
   push:
     branches: [ main ]
 
@@ -66,6 +75,39 @@ jobs:
           git -C kernel log -1 --format='%H%n%s'
           echo "=== kernel version ==="
           grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION) *=' kernel/Makefile
+
+      - name: Patch dangling Kconfig sources (Xiaomi OSS tree quirks)
+        run: |
+          set -e
+          cd kernel
+          # Xiaomi's OSS release strips some components (e.g. drivers/misc/hwid)
+          # but leaves their "source" statements behind -> kconfig fails to parse.
+          removed=0
+          while IFS= read -r -d '' f; do
+            rel_dir="$(dirname "$f")"
+            changed=0
+            : > "$f.tmpfix"
+            while IFS= read -r line || [ -n "$line" ]; do
+              if [[ "$line" =~ ^[[:space:]]*(o|r|or)?source[[:space:]]+\"?([^\"[:space:]]+) ]]; then
+                kind="${BASH_REMATCH[1]}"
+                p="${BASH_REMATCH[2]}"
+                if [ "$kind" = r ] || [ "$kind" = or ]; then
+                  test_p="$rel_dir/$p"
+                else
+                  test_p="$p"
+                fi
+                if [ ! -e "$test_p" ]; then
+                  echo "NOTE: removing dangling Kconfig source: $line (in $f)"
+                  removed=$((removed+1))
+                  changed=1
+                  continue
+                fi
+              fi
+              printf '%s\n' "$line" >> "$f.tmpfix"
+            done < "$f"
+            if [ "$changed" = 1 ]; then mv "$f.tmpfix" "$f"; else rm -f "$f.tmpfix"; fi
+          done < <(find . -name 'Kconfig*' -type f -print0)
+          echo "dangling Kconfig sources removed: $removed"
 
       - name: Set up AOSP prebuilt clang (official toolchain pinned by the kernel tree)
         env:
@@ -130,6 +172,27 @@ jobs:
           echo "=== notable options ==="
           grep -E 'CONFIG_(LTO|CFI|SHADOW_CALL_STACK|MODVERSIONS|MODULE_SIG|WERROR|DEBUG_INFO_BTF)' out/.config | grep -v 'is not set' || true
 
+      - name: Apply LTO mode (default: ThinLTO)
+        env:
+          LTO_MODE: ${{ inputs.lto || 'thin' }}
+        run: |
+          set -e
+          cd kernel
+          echo "Requested LTO mode: $LTO_MODE"
+          if [ "$LTO_MODE" = "full" ]; then
+            echo "Keeping official gki_defconfig LTO (CONFIG_LTO_CLANG_FULL=y)."
+          else
+            ./scripts/config --file out/.config -d LTO_CLANG_FULL -d LTO_CLANG_THIN -d LTO_NONE
+            if [ "$LTO_MODE" = "thin" ]; then
+              ./scripts/config --file out/.config -e LTO_CLANG_THIN
+            elif [ "$LTO_MODE" = "none" ]; then
+              ./scripts/config --file out/.config -e LTO_NONE
+            fi
+            make O=out ARCH=arm64 LLVM=1 olddefconfig
+          fi
+          echo "=== LTO settings in final config ==="
+          grep -E 'CONFIG_LTO' out/.config || true
+
       - name: Build kernel (Image + modules)
         run: |
           set -eo pipefail
@@ -148,6 +211,8 @@ jobs:
           find "$GITHUB_WORKSPACE/artifacts/modules/lib/modules" -name '*.ko' | wc -l
 
       - name: Collect artifacts
+        env:
+          LTO_MODE: ${{ inputs.lto || 'thin' }}
         run: |
           set -e
           cd kernel
@@ -172,6 +237,7 @@ jobs:
             echo "release commit   : $(git log -1 --format='%s')"
             echo "kernel release  : $RELEASE"
             echo "toolchain       : $USING_TOOLCHAIN"
+            echo "lto mode        : $LTO_MODE"
             echo "compiler        : $(clang --version | head -n1)"
             echo "config          : $GKI_FRAGMENT + $VERMEER_FRAGMENT -> $MERGED_DEFCONFIG"
             echo "targets         : Image modules (per build.config.aarch64 MAKE_GOALS)"
