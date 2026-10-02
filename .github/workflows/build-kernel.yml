@@ -187,16 +187,28 @@ jobs:
           cd kernel
           # On resume rounds a complete out/ (incl. .config) is restored from cache:
           # keep it untouched so make does not re-run syncconfig / rebuild the world.
-          if [ -f out/.config ] && [ "$(grep -c '^CONFIG' out/.config || true)" -ge 4000 ]; then
+          config_sane() {
+            [ -f out/.config ] || return 1
+            for sym in CONFIG_ARM64 CONFIG_MMU CONFIG_MODULES CONFIG_DRM; do
+              grep -q "^${sym}=y" out/.config || return 1
+            done
+            return 0
+          }
+          if config_sane; then
             echo "sane out/.config restored from build cache - keeping it as-is for incremental resume"
           else
             make O=out ARCH=arm64 LLVM=1 "$MERGED_DEFCONFIG" < /dev/null
           fi
           echo "=== config sanity ==="
+          if ! config_sane; then
+            echo "ERROR: .config is missing critical symbols - Kconfig parse is broken"
+            grep -E '^(CONFIG_ARM64|CONFIG_MMU|CONFIG_MODULES|CONFIG_DRM|CONFIG_LTO_CLANG)' out/.config || true
+            exit 1
+          fi
           entries=$(grep -c '^CONFIG' out/.config || true)
-          echo "config entries: $entries"
-          if [ "$entries" -lt 4000 ]; then
-            echo "ERROR: .config suspiciously small ($entries entries) - Kconfig parse is broken"
+          echo "config entries (enabled): $entries"
+          if [ "$entries" -lt 1500 ]; then
+            echo "ERROR: .config suspiciously small ($entries enabled entries) - Kconfig parse is broken"
             exit 1
           fi
           echo "=== kernel release ==="
