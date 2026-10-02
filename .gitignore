@@ -1,0 +1,6 @@
+kernel/
+out/
+artifacts/
+aosp-clang/
+build.log
+*.tar.gz

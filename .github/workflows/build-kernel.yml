@@ -1,0 +1,200 @@
+name: Build Redmi K70 Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: 'MiCode kernel source branch (Redmi K70 = bsp-vermeer-t-oss)'
+        required: true
+        default: 'bsp-vermeer-t-oss'
+        type: string
+      toolchain:
+        description: 'Compiler toolchain (auto: AOSP prebuilt clang, fallback apt clang)'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - aosp
+          - apt
+  push:
+    branches: [ main ]
+
+concurrency:
+  group: build-redmi-k70-kernel-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KERNEL_REPO: https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
+  KERNEL_BRANCH: ${{ inputs.kernel_branch || 'bsp-vermeer-t-oss' }}
+  MERGED_DEFCONFIG: vendor/vermeer-gki_defconfig
+  GKI_FRAGMENT: arch/arm64/configs/gki_defconfig
+  VERMEER_FRAGMENT: arch/arm64/configs/vendor/vermeer_GKI.config
+  AOSP_CLANG_VERSION: r450784e
+
+jobs:
+  build:
+    name: Build official vermeer kernel
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Maximize runner disk space
+        run: |
+          set -e
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Install build dependencies (baseline apt clang included)
+        run: |
+          set -e
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex cpio zip unzip curl wget git \
+            libssl-dev libelf-dev libncurses-dev \
+            zstd lz4 lzop u-boot-tools kmod dwarves \
+            python3 python-is-python3 clang lld llvm
+          echo "=== baseline (apt) toolchain ==="
+          clang --version | head -n1
+          ld.lld --version | head -n1
+
+      - name: Clone official Xiaomi kernel source (MiCode)
+        run: |
+          set -e
+          git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
+          echo "=== HEAD commit ==="
+          git -C kernel log -1 --format='%H%n%s'
+          echo "=== kernel version ==="
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION) *=' kernel/Makefile
+
+      - name: Set up AOSP prebuilt clang (official toolchain pinned by the kernel tree)
+        env:
+          TOOLCHAIN_MODE: ${{ inputs.toolchain || 'auto' }}
+        run: |
+          set -e
+          if [ "$TOOLCHAIN_MODE" = "apt" ]; then
+            echo "toolchain=apt requested, skipping AOSP prebuilt download."
+            echo "USING_TOOLCHAIN=apt clang ($(clang --version | head -n1))" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          ok=0
+          for ref in main-kernel-build-2022 main-kernel-build-2023 main-kernel-build-2024 master; do
+            url="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/${ref}/clang-${AOSP_CLANG_VERSION}.tar.gz"
+            echo "Trying $url"
+            if curl -fsSL --retry 2 --connect-timeout 20 --max-time 900 -o /tmp/aosp-clang.tar.gz "$url" \
+               && tar -tzf /tmp/aosp-clang.tar.gz >/dev/null 2>&1; then
+              mkdir -p "$GITHUB_WORKSPACE/aosp-clang"
+              tar -xzf /tmp/aosp-clang.tar.gz -C "$GITHUB_WORKSPACE/aosp-clang"
+              if [ -x "$GITHUB_WORKSPACE/aosp-clang/bin/clang" ]; then
+                echo "$GITHUB_WORKSPACE/aosp-clang/bin" >> "$GITHUB_PATH"
+                echo "USING_TOOLCHAIN=AOSP prebuilt clang ${AOSP_CLANG_VERSION} (from ${ref})" >> "$GITHUB_ENV"
+                ok=1
+                break
+              fi
+            fi
+          done
+          if [ "$ok" != "1" ]; then
+            if [ "$TOOLCHAIN_MODE" = "aosp" ]; then
+              echo "ERROR: toolchain=aosp requested but AOSP prebuilt could not be downloaded."
+              exit 1
+            fi
+            echo "AOSP prebuilt unavailable, falling back to apt clang."
+            echo "USING_TOOLCHAIN=apt clang ($(clang --version | head -n1))" >> "$GITHUB_ENV"
+          fi
+
+      - name: Show active toolchain
+        run: |
+          which clang ld.lld
+          clang --version | head -n1
+          echo "toolchain: $USING_TOOLCHAIN"
+
+      - name: Merge GKI + vermeer vendor config fragments (official Qualcomm flow)
+        run: |
+          set -e
+          cd kernel
+          # Mirrors build.config.msm.gki (VARIANT=gki): apply_defconfig_fragment() +
+          # merge_defconfig_fragments() -> merge gki_defconfig + vendor/vermeer_GKI.config
+          # into arch/arm64/configs/vendor/vermeer-gki_defconfig
+          KCONFIG_CONFIG="$PWD/arch/arm64/configs/$MERGED_DEFCONFIG" \
+            ./scripts/kconfig/merge_config.sh -m -r -y "$GKI_FRAGMENT" "$VERMEER_FRAGMENT"
+          echo "=== merged defconfig: $MERGED_DEFCONFIG ==="
+          grep -c '^CONFIG' "arch/arm64/configs/$MERGED_DEFCONFIG"
+
+      - name: Generate .config
+        run: |
+          set -e
+          cd kernel
+          make O=out ARCH=arm64 LLVM=1 "$MERGED_DEFCONFIG"
+          echo "=== kernel release ==="
+          make O=out ARCH=arm64 LLVM=1 kernelrelease
+          echo "=== notable options ==="
+          grep -E 'CONFIG_(LTO|CFI|SHADOW_CALL_STACK|MODVERSIONS|MODULE_SIG|WERROR|DEBUG_INFO_BTF)' out/.config | grep -v 'is not set' || true
+
+      - name: Build kernel (Image + modules)
+        run: |
+          set -eo pipefail
+          cd kernel
+          make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 Image modules 2>&1 | tee build.log
+          echo "=== build output ==="
+          ls -lh out/arch/arm64/boot/Image
+          file out/arch/arm64/boot/Image | head -n1 || true
+
+      - name: Stage modules (modules_install + depmod)
+        run: |
+          set -e
+          cd kernel
+          make O=out ARCH=arm64 LLVM=1 INSTALL_MOD_PATH="$GITHUB_WORKSPACE/artifacts/modules" modules_install
+          echo "=== staged modules ==="
+          find "$GITHUB_WORKSPACE/artifacts/modules/lib/modules" -name '*.ko' | wc -l
+
+      - name: Collect artifacts
+        run: |
+          set -e
+          cd kernel
+          A="$GITHUB_WORKSPACE/artifacts"
+          RELEASE="$(make O=out ARCH=arm64 LLVM=1 kernelrelease)"
+          mkdir -p "$A/boot"
+          cp out/arch/arm64/boot/Image "$A/boot/"
+          cp out/System.map "$A/boot/" 2>/dev/null || true
+          cp out/Module.symvers "$A/" 2>/dev/null || true
+          cp out/modules.builtin "$A/" 2>/dev/null || true
+          cp out/modules.builtin.modinfo "$A/" 2>/dev/null || true
+          cp out/.config "$A/kernel.config"
+          cp "arch/arm64/configs/$MERGED_DEFCONFIG" "$A/merged-defconfig"
+          cp build.log "$A/" 2>/dev/null || true
+          {
+            echo "Redmi K70 (vermeer) - official Xiaomi kernel source build"
+            echo "===================================================="
+            echo "build date (UTC) : $(date -u '+%Y-%m-%d %H:%M:%S')"
+            echo "kernel source   : $KERNEL_REPO"
+            echo "branch          : $KERNEL_BRANCH"
+            echo "source commit   : $(git log -1 --format='%H')"
+            echo "release commit   : $(git log -1 --format='%s')"
+            echo "kernel release  : $RELEASE"
+            echo "toolchain       : $USING_TOOLCHAIN"
+            echo "compiler        : $(clang --version | head -n1)"
+            echo "config          : $GKI_FRAGMENT + $VERMEER_FRAGMENT -> $MERGED_DEFCONFIG"
+            echo "targets         : Image modules (per build.config.aarch64 MAKE_GOALS)"
+          } > "$A/BUILD-INFO.txt"
+          tar -czf "$A/modules.tar.gz" -C "$A/modules" .
+          rm -rf "$A/modules"
+          echo "=== artifacts ==="
+          ls -lh "$A"
+          df -h /
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: redmi-k70-vermeer-kernel
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: kernel/build.log
+          if-no-files-found: ignore
+          retention-days: 7
