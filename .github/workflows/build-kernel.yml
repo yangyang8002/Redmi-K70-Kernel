@@ -232,7 +232,7 @@ jobs:
             echo "$want already set - no config rewrite needed"
           else
             ./scripts/config --file out/.config -d LTO_CLANG_FULL -d LTO_CLANG_THIN -d LTO_NONE
-            ./scripts/config --file out/.config -e '${want%%=*}'
+            ./scripts/config --file out/.config -e ${want%%=*}
             make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           fi
           echo "=== LTO settings in final config ==="
