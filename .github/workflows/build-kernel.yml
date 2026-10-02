@@ -256,8 +256,14 @@ jobs:
           # Make all sources older than any restored out/ objects so make resumes instead of rebuilding
           # (non-fatal: broken symlinks like Documentation/devicetree/bindings must not abort)
           find . -not -path './out*' -exec touch -d @0 {} + 2>/dev/null || true
+          # The GKI top-level Makefile hardcodes -Werror=implicit-int and
+          # -Werror=implicit-function-declaration; newer apt clang rejects legacy
+          # Qualcomm C code (e.g. minidump_log.c) on those. KCFLAGS is appended
+          # after KBUILD_CFLAGS so it overrides them (downgrade to warnings).
           # Never let make (or stray tools like a bare bc call in this tree) block on stdin
-          make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 $BUILD_TARGETS < /dev/null 2>&1 | tee -a build.log
+          make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 \
+               KCFLAGS='-Wno-error=implicit-int -Wno-error=implicit-function-declaration' \
+               $BUILD_TARGETS < /dev/null 2>&1 | tee -a build.log
           echo "=== build output ==="
           ls -lh out/arch/arm64/boot/Image 2>/dev/null || true
           file out/arch/arm64/boot/Image 2>/dev/null | head -n1 || true
@@ -307,7 +313,7 @@ jobs:
             echo "kernel release  : $RELEASE"
             echo "toolchain       : $USING_TOOLCHAIN"
             echo "lto mode        : $LTO_MODE"
-            echo "werror          : disabled (newer clang compatibility; official gki forces it on)"
+            echo "werror          : disabled + KCFLAGS -Wno-error=implicit-int (newer clang compatibility)"
             echo "compiler        : $(clang --version | head -n1)"
             echo "config          : $GKI_FRAGMENT + $VERMEER_FRAGMENT -> $MERGED_DEFCONFIG"
             echo "targets         : $BUILD_TARGETS (official: Image modules per build.config.aarch64)"
