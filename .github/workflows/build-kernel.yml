@@ -26,6 +26,11 @@ on:
           - thin
           - full
           - none
+      build_targets:
+        description: 'make targets (official: Image modules; or split rounds: Image / modules)'
+        required: false
+        default: 'Image modules'
+        type: string
   push:
     branches: [ main ]
 
@@ -40,6 +45,7 @@ env:
   GKI_FRAGMENT: arch/arm64/configs/gki_defconfig
   VERMEER_FRAGMENT: arch/arm64/configs/vendor/vermeer_GKI.config
   AOSP_CLANG_VERSION: r450784e
+  BUILD_TARGETS: ${{ inputs.build_targets || 'Image modules' }}
 
 jobs:
   build:
@@ -82,15 +88,19 @@ jobs:
           cd kernel
           # Xiaomi's OSS release strips some components (e.g. drivers/misc/hwid)
           # but leaves their "source" statements behind -> kconfig fails to parse.
+          # Only touch real statements: quoted path, no $(VAR) expansion, target actually missing.
           removed=0
           while IFS= read -r -d '' f; do
             rel_dir="$(dirname "$f")"
             changed=0
             : > "$f.tmpfix"
             while IFS= read -r line || [ -n "$line" ]; do
-              if [[ "$line" =~ ^[[:space:]]*(o|r|or)?source[[:space:]]+\"?([^\"[:space:]]+) ]]; then
+              if [[ "$line" =~ ^(o|r|or)?source[[:space:]]+\"([^\"]+)\" ]]; then
                 kind="${BASH_REMATCH[1]}"
                 p="${BASH_REMATCH[2]}"
+                case "$p" in
+                  *'('$*) printf '%s\n' "$line" >> "$f.tmpfix"; continue ;;
+                esac
                 if [ "$kind" = r ] || [ "$kind" = or ]; then
                   test_p="$rel_dir/$p"
                 else
@@ -106,7 +116,7 @@ jobs:
               printf '%s\n' "$line" >> "$f.tmpfix"
             done < "$f"
             if [ "$changed" = 1 ]; then mv "$f.tmpfix" "$f"; else rm -f "$f.tmpfix"; fi
-          done < <(find . -name 'Kconfig*' -type f -print0)
+          done < <(find . -name 'Kconfig*' -type f -not -path './scripts/kconfig/tests/*' -print0)
           echo "dangling Kconfig sources removed: $removed"
 
       - name: Set up AOSP prebuilt clang (official toolchain pinned by the kernel tree)
@@ -162,13 +172,35 @@ jobs:
           echo "=== merged defconfig: $MERGED_DEFCONFIG ==="
           grep -c '^CONFIG' "arch/arm64/configs/$MERGED_DEFCONFIG"
 
+      - name: Restore kernel build tree cache (resumable rounds)
+        id: outcache
+        uses: actions/cache/restore@v4
+        with:
+          path: kernel/out
+          key: k70-out-${{ env.KERNEL_BRANCH }}-${{ github.run_id }}
+          restore-keys: |
+            k70-out-${{ env.KERNEL_BRANCH }}-
+
       - name: Generate .config
         run: |
           set -e
           cd kernel
-          make O=out ARCH=arm64 LLVM=1 "$MERGED_DEFCONFIG"
+          # On resume rounds a complete out/ (incl. .config) is restored from cache:
+          # keep it untouched so make does not re-run syncconfig / rebuild the world.
+          if [ -f out/.config ]; then
+            echo "out/.config restored from build cache - keeping it as-is for incremental resume"
+          else
+            make O=out ARCH=arm64 LLVM=1 "$MERGED_DEFCONFIG" < /dev/null
+          fi
+          echo "=== config sanity ==="
+          entries=$(grep -c '^CONFIG' out/.config || true)
+          echo "config entries: $entries"
+          if [ "$entries" -lt 4000 ]; then
+            echo "ERROR: .config suspiciously small ($entries entries) - Kconfig parse is broken"
+            exit 1
+          fi
           echo "=== kernel release ==="
-          make O=out ARCH=arm64 LLVM=1 kernelrelease
+          make O=out ARCH=arm64 LLVM=1 kernelrelease < /dev/null
           echo "=== notable options ==="
           grep -E 'CONFIG_(LTO|CFI|SHADOW_CALL_STACK|MODVERSIONS|MODULE_SIG|WERROR|DEBUG_INFO_BTF)' out/.config | grep -v 'is not set' || true
 
@@ -179,34 +211,52 @@ jobs:
           set -e
           cd kernel
           echo "Requested LTO mode: $LTO_MODE"
-          if [ "$LTO_MODE" = "full" ]; then
-            echo "Keeping official gki_defconfig LTO (CONFIG_LTO_CLANG_FULL=y)."
+          case "$LTO_MODE" in
+            thin) want="CONFIG_LTO_CLANG_THIN=y" ;;
+            full) want="CONFIG_LTO_CLANG_FULL=y" ;;
+            none) want="CONFIG_LTO_NONE=y" ;;
+          esac
+          if grep -q "^$want$" out/.config; then
+            echo "$want already set - no config rewrite needed"
           else
             ./scripts/config --file out/.config -d LTO_CLANG_FULL -d LTO_CLANG_THIN -d LTO_NONE
-            if [ "$LTO_MODE" = "thin" ]; then
-              ./scripts/config --file out/.config -e LTO_CLANG_THIN
-            elif [ "$LTO_MODE" = "none" ]; then
-              ./scripts/config --file out/.config -e LTO_NONE
-            fi
-            make O=out ARCH=arm64 LLVM=1 olddefconfig
+            ./scripts/config --file out/.config -e '${want%%=*}'
+            make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           fi
           echo "=== LTO settings in final config ==="
           grep -E 'CONFIG_LTO' out/.config || true
+          if [ "$LTO_MODE" = "thin" ] && ! grep -q 'CONFIG_LTO_CLANG_THIN=y' out/.config; then
+            echo "ERROR: ThinLTO was not enabled in final config"
+            exit 1
+          fi
 
-      - name: Build kernel (Image + modules)
+      - name: Build kernel
+        timeout-minutes: 270
         run: |
           set -eo pipefail
           cd kernel
-          make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 Image modules 2>&1 | tee build.log
+          # Make all sources older than any restored out/ objects so make resumes instead of rebuilding
+          find . -not -path './out*' -exec touch -d @0 {} +
+          # Never let make (or stray tools like a bare bc call in this tree) block on stdin
+          make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 $BUILD_TARGETS < /dev/null 2>&1 | tee -a build.log
           echo "=== build output ==="
-          ls -lh out/arch/arm64/boot/Image
-          file out/arch/arm64/boot/Image | head -n1 || true
+          ls -lh out/arch/arm64/boot/Image 2>/dev/null || true
+          file out/arch/arm64/boot/Image 2>/dev/null | head -n1 || true
+          echo "=== modules built ==="
+          find out -name '*.ko' 2>/dev/null | wc -l
+
+      - name: Save kernel build tree cache (resume on timeout)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: kernel/out
+          key: k70-out-${{ env.KERNEL_BRANCH }}-${{ github.run_id }}
 
       - name: Stage modules (modules_install + depmod)
         run: |
           set -e
           cd kernel
-          make O=out ARCH=arm64 LLVM=1 INSTALL_MOD_PATH="$GITHUB_WORKSPACE/artifacts/modules" modules_install
+          make O=out ARCH=arm64 LLVM=1 INSTALL_MOD_PATH="$GITHUB_WORKSPACE/artifacts/modules" modules_install < /dev/null
           echo "=== staged modules ==="
           find "$GITHUB_WORKSPACE/artifacts/modules/lib/modules" -name '*.ko' | wc -l
 
@@ -217,7 +267,7 @@ jobs:
           set -e
           cd kernel
           A="$GITHUB_WORKSPACE/artifacts"
-          RELEASE="$(make O=out ARCH=arm64 LLVM=1 kernelrelease)"
+          RELEASE="$(make O=out ARCH=arm64 LLVM=1 kernelrelease < /dev/null)"
           mkdir -p "$A/boot"
           cp out/arch/arm64/boot/Image "$A/boot/"
           cp out/System.map "$A/boot/" 2>/dev/null || true
@@ -240,7 +290,7 @@ jobs:
             echo "lto mode        : $LTO_MODE"
             echo "compiler        : $(clang --version | head -n1)"
             echo "config          : $GKI_FRAGMENT + $VERMEER_FRAGMENT -> $MERGED_DEFCONFIG"
-            echo "targets         : Image modules (per build.config.aarch64 MAKE_GOALS)"
+            echo "targets         : $BUILD_TARGETS (official: Image modules per build.config.aarch64)"
           } > "$A/BUILD-INFO.txt"
           tar -czf "$A/modules.tar.gz" -C "$A/modules" .
           rm -rf "$A/modules"
@@ -257,7 +307,7 @@ jobs:
           retention-days: 90
 
       - name: Upload build log on failure
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: build-log

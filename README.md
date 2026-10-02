@@ -20,7 +20,12 @@
 工具链：优先使用内核树 `build.config.constants` 中固定的 AOSP 官方预编译 **clang r450784e**；下载失败时自动回退到 Ubuntu 仓库 clang（也可用 Run workflow 输入强制指定）。
 
 - **LTO 模式**：默认 **ThinLTO**（`CONFIG_LTO_CLANG_THIN=y`，内存占用与耗时更低）；官方 `gki_defconfig` 使用 `CONFIG_LTO_CLANG_FULL=y`，如需完全一致可在 Run workflow 时选择 `full`（或 `none`）。
-- 构建前会自动清理小米开源树中的**悬空 Kconfig source 引用**（如 `drivers/misc/hwid/Kconfig`——对应目录未随源码开源，直接构建会报 `can't open file`）。
+- 构建前会自动清理小米开源树中的**悬空 Kconfig `source` 引用**（如 `drivers/misc/hwid/Kconfig`——对应目录未随源码开源，直接构建会报 `can't open file`）。清理规则只匹配**带引号、不含 `$(VAR)` 变量且目标文件确实缺失**的真实 source 语句，不会误删 `arch/$(SRCARCH)/Kconfig` 这类合法引用或帮助文本。
+- 所有 `make` 调用都重定向了 stdin（`< /dev/null`）：该内核树的构建脚本里存在**裸 `bc` 调用**，会阻塞在 stdin 上导致构建假死（曾出现 6 小时零输出）。
+
+## 断点续编（应对 6 小时任务上限）
+
+GitHub 免费单任务上限 6 小时，完整 `Image + modules` 构建在 4 核 runner 上可能超时。工作流会把 `kernel/out` 构建树缓存到 actions/cache（键 `k70-out-<分支>-<run_id>`，恢复时按前缀取最近一次），构建步骤自带 **270 分钟**超时——超时会先把 `out/` 存入缓存再退出，下一次运行把源码时间戳回拨后自动**断点续编**（已编译对象直接复用）；也可在 Run workflow 时用 `build_targets` 输入手动分轮（先 `Image`，再 `modules`）。
 
 ## 产物（Actions Artifacts）
 
@@ -37,7 +42,7 @@
 ## 使用
 
 - **自动触发**：推送到 `main` 分支即触发构建
-- **手动触发**：Actions → *Build Redmi K70 Kernel* → *Run workflow*（可选源码分支、工具链、LTO 模式）
+- **手动触发**：Actions → *Build Redmi K70 Kernel* → *Run workflow*（可选源码分支、工具链、LTO 模式、构建目标 `build_targets`）
 
 ## 说明与注意
 
