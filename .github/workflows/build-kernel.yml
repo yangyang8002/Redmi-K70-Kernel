@@ -99,7 +99,7 @@ jobs:
                 kind="${BASH_REMATCH[1]}"
                 p="${BASH_REMATCH[2]}"
                 case "$p" in
-                  *'('$*) printf '%s\n' "$line" >> "$f.tmpfix"; continue ;;
+                  *'$('*) printf '%s\n' "$line" >> "$f.tmpfix"; continue ;;
                 esac
                 if [ "$kind" = r ] || [ "$kind" = or ]; then
                   test_p="$rel_dir/$p"
@@ -187,8 +187,8 @@ jobs:
           cd kernel
           # On resume rounds a complete out/ (incl. .config) is restored from cache:
           # keep it untouched so make does not re-run syncconfig / rebuild the world.
-          if [ -f out/.config ]; then
-            echo "out/.config restored from build cache - keeping it as-is for incremental resume"
+          if [ -f out/.config ] && [ "$(grep -c '^CONFIG' out/.config || true)" -ge 4000 ]; then
+            echo "sane out/.config restored from build cache - keeping it as-is for incremental resume"
           else
             make O=out ARCH=arm64 LLVM=1 "$MERGED_DEFCONFIG" < /dev/null
           fi
