@@ -248,7 +248,8 @@ jobs:
           set -eo pipefail
           cd kernel
           # Make all sources older than any restored out/ objects so make resumes instead of rebuilding
-          find . -not -path './out*' -exec touch -d @0 {} +
+          # (non-fatal: broken symlinks like Documentation/devicetree/bindings must not abort)
+          find . -not -path './out*' -exec touch -d @0 {} + 2>/dev/null || true
           # Never let make (or stray tools like a bare bc call in this tree) block on stdin
           make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 $BUILD_TARGETS < /dev/null 2>&1 | tee -a build.log
           echo "=== build output ==="
