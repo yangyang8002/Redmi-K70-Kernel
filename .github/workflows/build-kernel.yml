@@ -216,7 +216,7 @@ jobs:
           echo "=== notable options ==="
           grep -E 'CONFIG_(LTO|CFI|SHADOW_CALL_STACK|MODVERSIONS|MODULE_SIG|WERROR|DEBUG_INFO_BTF)' out/.config | grep -v 'is not set' || true
 
-      - name: 'Apply LTO mode (default ThinLTO)'
+      - name: 'Apply LTO mode (default ThinLTO) and turn off WERROR'
         env:
           LTO_MODE: ${{ inputs.lto || 'thin' }}
         run: |
@@ -228,15 +228,21 @@ jobs:
             full) want="CONFIG_LTO_CLANG_FULL=y" ;;
             none) want="CONFIG_LTO_NONE=y" ;;
           esac
-          if grep -q "^$want$" out/.config; then
-            echo "$want already set - no config rewrite needed"
+          # GKI forces CONFIG_WERROR=y, but the apt clang fallback is newer than the
+          # official clang r450784e and rejects some legacy C code in this tree
+          # (e.g. drivers/soc/qcom/minidump_log.c implicit-int) - keep those as warnings.
+          werror_off=0
+          grep -q '^# CONFIG_WERROR is not set' out/.config && werror_off=1
+          if grep -q "^$want$" out/.config && [ "$werror_off" = 1 ]; then
+            echo "$want set and WERROR off already - no config rewrite needed"
           else
             ./scripts/config --file out/.config -d LTO_CLANG_FULL -d LTO_CLANG_THIN -d LTO_NONE
             ./scripts/config --file out/.config -e ${want%%=*}
+            ./scripts/config --file out/.config -d WERROR
             make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           fi
-          echo "=== LTO settings in final config ==="
-          grep -E 'CONFIG_LTO' out/.config || true
+          echo "=== LTO + WERROR settings in final config ==="
+          grep -E 'CONFIG_LTO|CONFIG_WERROR' out/.config || true
           if [ "$LTO_MODE" = "thin" ] && ! grep -q 'CONFIG_LTO_CLANG_THIN=y' out/.config; then
             echo "ERROR: ThinLTO was not enabled in final config"
             exit 1
@@ -301,6 +307,7 @@ jobs:
             echo "kernel release  : $RELEASE"
             echo "toolchain       : $USING_TOOLCHAIN"
             echo "lto mode        : $LTO_MODE"
+            echo "werror          : disabled (newer clang compatibility; official gki forces it on)"
             echo "compiler        : $(clang --version | head -n1)"
             echo "config          : $GKI_FRAGMENT + $VERMEER_FRAGMENT -> $MERGED_DEFCONFIG"
             echo "targets         : $BUILD_TARGETS (official: Image modules per build.config.aarch64)"
