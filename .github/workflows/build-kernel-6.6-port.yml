@@ -317,6 +317,9 @@ jobs:
           # core_hang_detect touches bus_type.dev_root, removed in 6.6; it
           # is a debug facility not in the official vermeer module list.
           ./scripts/config --file out/.config -d MSM_CORE_HANG_DETECT
+          # qdss_bridge uses the 5.15-private MHI API (MHI_MAX_MTU, two-arg
+          # mhi calls); it is a debug facility not in the official list.
+          ./scripts/config --file out/.config -d QCOM_QDSS_BRIDGE
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           KFLAG=""
           [ "$KEEP_GOING" = "true" ] && KFLAG="-k"
