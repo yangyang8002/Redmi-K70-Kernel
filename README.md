@@ -52,7 +52,7 @@ GitHub 免费单任务上限 6 小时，完整 `Image + modules` 构建在 4 核
 
 - `boot.img`：`mkbootimg --header_version 4 --kernel Image --cmdline "" --base 0x80000000 --pagesize 4096`（`BOOT_IMAGE_HEADER_VERSION=4`、`BASE_ADDRESS`、`PAGE_SIZE` 均官方值）。GKI boot v4 的 cmdline 为空，引导参数在 vendor_boot 的 `vendor_cmdline` 里。**未签名**（GKI `boot_signature` 需 Google 认证密钥，无法生成）。
 - `vendor_boot.img`：`vendor_cmdline` 为官方 gki 变体值（`console=ttyMSM0,115200n8 earlycon=qcom_geni,0x00a9C000 qcom_geni_serial.con_enabled=1 nosoftlockup bootconfig`）；vendor ramdisk 按官方规则构造——`android/gki_system_dlkm_modules` + `modules.list.msm.vermeer` 两个官方清单内的模块（过滤掉 OSS 树剥离后无法编译的，如 `hwid.ko`）+ `modules.load` + 官方 blocklist + depmod 元数据；其余模块按官方 `prepare_vendor_dlkm` 逻辑归入 `vendor_dlkm-modules.tar.gz`。
-- `init_boot.img`：其 generic ramdisk 是 **AOSP 用户态**（`/init` 二进制、linker 等），不属于内核源码，内核树无法构建。**直接复用官方 init_boot.img 即可**：本构建通过提交树内修复使 vermagic 与官方完全一致（`5.15.78-g53ef33eacdc4`，无 `-dirty` 后缀），官方 init_boot 里的 GKI 模块在本内核上可直接加载。把官方 `init_boot.img` 放进仓库 `stock/` 目录重新触发构建，它会被原样打进 artifacts。
+- `init_boot.img`：其 generic ramdisk 是 **AOSP 用户态**（`/init` 二进制、linker 等），不属于内核源码，内核树无法构建。本构建通过提交树内修复消除 `-dirty` 后缀，release 字符串（`5.15.78`）与官方从此 OSS 树干净构建的产物一致；若你手上官方 init_boot 内模块的 vermagic 与 `5.15.78` 不一致（小米出厂固件可能由内部树构建、带不同后缀），则不能直通——需用本仓库的模块重打 ramdisk。把官方 `init_boot.img` 放进仓库 `stock/` 目录重新触发构建，它会被原样打进 artifacts。
 
 ### 如何补齐 DTB 与官方镜像参数（`stock/` 目录）
 
