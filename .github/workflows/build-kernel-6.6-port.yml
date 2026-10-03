@@ -132,6 +132,10 @@ jobs:
             n=$((n+1))
           done
           echo "class_create fixes applied"
+          # 6.2 made uart_ops.set_termios take a const old termios; fix the
+          # 5.15 eud uart driver signature to match.
+          sed -i '/eud_set_termios(struct uart_port \*port/,+1 s/struct ktermios \*old)/const struct ktermios *old)/' drivers/soc/qcom/eud.c
+          sed -n '393,394p' drivers/soc/qcom/eud.c || true
           # 6.9 made ww_mutex_trylock() take a ww_acquire_ctx too; the 5.15
           # callers pass only the lock. Add NULL for single-arg calls.
           grep -rl 'ww_mutex_trylock(' drivers/ 2>/dev/null | while read -r f; do
