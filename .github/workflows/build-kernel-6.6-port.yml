@@ -132,6 +132,13 @@ jobs:
             n=$((n+1))
           done
           echo "class_create fixes applied"
+          # ... and the same call split across two lines (dcc_v2.c style):
+          # class_create(THIS_MODULE,\n "name") - the single-line sed above
+          # missed it, so strip the owner arg at end-of-line too.
+          grep -rl 'class_create(THIS_MODULE,$' drivers/ arch/ 2>/dev/null | while read -r f; do
+            sed -i 's/class_create(THIS_MODULE,$/class_create(/' "$f"
+            echo "  multiline class_create fixed: $f"
+          done
           # 6.2 made uart_ops.set_termios take a const old termios; fix the
           # 5.15 eud uart driver signature to match.
           sed -i '/eud_set_termios(struct uart_port \*port/,+1 s/struct ktermios \*old)/const struct ktermios *old)/' drivers/soc/qcom/eud.c
