@@ -287,6 +287,11 @@ jobs:
           # 5.15 pmic_glink client struct differs from 6.6's; battery debug
           # is not in the official vermeer module list - skip it.
           ./scripts/config --file out/.config -d QTI_BATTERY_GLINK_DEBUG
+          # Same 5.15 pmic_glink client-data layout, same reasoning: the
+          # charger-ulog and altmode glink clients are debug facilities that
+          # are not in the official vermeer module list - skip them too.
+          ./scripts/config --file out/.config \
+            -d QTI_CHARGER_ULOG_GLINK -d QTI_ALTMODE_GLINK
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           KFLAG=""
           [ "$KEEP_GOING" = "true" ] && KFLAG="-k"
