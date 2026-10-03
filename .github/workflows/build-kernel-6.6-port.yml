@@ -187,6 +187,9 @@ jobs:
             added=0
             while IFS= read -r line; do
               case "$line" in
+                # clk-dummy.o needs the 5.15-only clk_dummy struct from the
+                # 5.15 common.h; skip it (6.6 has no dummy-clock concept).
+                obj-*clk-dummy.o*) ;;
                 obj-*) grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
               esac
             done < "$v15m"
@@ -247,6 +250,9 @@ jobs:
           # (gunyah vm_mgr.c) references module_refcount() which only exists
           # when unloading is compiled in. Enable it.
           ./scripts/config --file out/.config -e MODULE_UNLOAD
+          # 5.15-private rpmsg API (ept->rx_done etc.) was removed in 6.6 and
+          # glink_pkt.ko is not in the official vermeer module list: skip it.
+          ./scripts/config --file out/.config -d QCOM_GLINK_PKT
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           KFLAG=""
           [ "$KEEP_GOING" = "true" ] && KFLAG="-k"
