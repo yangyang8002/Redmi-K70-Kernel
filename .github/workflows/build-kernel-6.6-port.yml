@@ -166,6 +166,12 @@ jobs:
           grep -c '^CONFIG' out/.config || true
           echo "=== driver options of interest ==="
           grep -E 'CONFIG_DRM_MSM|CONFIG_QCOM_|CONFIG_QCACLD|CONFIG_MSM_|CONFIG_QCOM_CAMSS|CONFIG_INTERCONNECT_QCOM' out/.config | head -n 30 || true
+          echo "=== KEY SYMBOL SURVIVAL (post-merge olddefconfig) ==="
+          echo "total =m entries: $(grep -c '=m$' out/.config || true)"
+          for s in ARCH_KALAMA ARCH_CROW ARCH_KAKA PINCTRL_KALAMA PINCTRL_CROW PINCTRL_SM8550 GCC_KALAMA CAMCC_KALAMA DISPCC_KALAMA QCOM_LLCC QCOM_RPMH QCOM_AOSS MSM_QMP GUNYAH QCOM_HWSPINLOCK UFS_QCOM SDHCI_MSM CMD_DB; do
+            v="$(grep -E "^CONFIG_${s}=" out/.config || grep -E "^# CONFIG_${s} " out/.config || echo "SYMBOL-LOST: ${s}")"
+            echo "  $v"
+          done
 
       - name: Build (collect errors, -k)
         env:
