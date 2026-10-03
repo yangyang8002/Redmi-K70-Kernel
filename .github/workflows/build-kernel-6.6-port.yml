@@ -337,6 +337,11 @@ jobs:
           # merge both got enabled and collide. Keep the real driver
           # (official module list member), drop the V1 stubs.
           ./scripts/config --file out/.config -d QTI_HW_KEY_MANAGER_V1
+          # CONFIG_QTI_CRYPTO_COMMON gates crypto-qti-platform.h between real
+          # declarations and -EOPNOTSUPP stubs; if it gets dropped at
+          # olddefconfig the stubs collide with the real hwkm functions.
+          # Force it on (it is also an official module: crypto-qti-common).
+          ./scripts/config --file out/.config -e QTI_CRYPTO_COMMON
           # Batch: every soc/qcom target that is fragment=m, NOT in the
           # official vermeer module list, and built on 5.15-private
           # frameworks (sleep-stats collectors, dump collectors, BAM/SPS
