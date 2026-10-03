@@ -117,6 +117,19 @@ jobs:
           # fragment enables GUNYAH, so drop the stale refcount check.
           sed -i 's/WARN_ON(fn->mod \&\& module_refcount(fn->mod));/WARN_ON(0);/' drivers/virt/gunyah/vm_mgr.c
           grep -n 'WARN_ON(0)' drivers/virt/gunyah/vm_mgr.c
+          # The 5.15 SoC platform symbols (ARCH_KALAMA/CROW/KAKA) do not exist
+          # in the 6.6 tree, so every vendor-driver Kconfig that depends on
+          # them was silently dropped at olddefconfig and no .ko was built.
+          # Define them so the merged vermeer fragment entries survive.
+          grep -q 'config ARCH_KALAMA' arch/arm64/Kconfig.platforms || cat >> arch/arm64/Kconfig.platforms <<'EOF'
+config ARCH_KALAMA
+	bool
+config ARCH_CROW
+	bool
+config ARCH_KAKA
+	bool
+EOF
+          tail -n 12 arch/arm64/Kconfig.platforms
 
       - name: Generate .config (gki_defconfig + vermeer fragment)
         run: |
