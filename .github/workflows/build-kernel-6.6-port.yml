@@ -160,8 +160,17 @@ jobs:
           }
           make O=out ARCH=arm64 LLVM=1 gki_defconfig < /dev/null
           ./scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/vendor/vermeer_GKI.config || true
+          echo "=== PRE-OLDDEFCONFIG (.config right after merge) ==="
+          grep -E '^CONFIG_(MODULES|ARCH_KALAMA|PINCTRL_KALAMA|QCOM_LLCC)=|^# CONFIG_(MODULES|ARCH_KALAMA)' .config || echo "  none of the key symbols present pre-olddefconfig"
+          echo "pre =m entries: $(grep -c '=m$' .config || true)"
           mv .config out/.config
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
+          echo "=== POST-OLDDEFCONFIG ==="
+          grep -E '^CONFIG_(MODULES|ARCH_KALAMA|PINCTRL_KALAMA|QCOM_LLCC)=|^# CONFIG_(MODULES|ARCH_KALAMA)' out/.config || echo "  none of the key symbols present post-olddefconfig"
+          echo "post =m entries: $(grep -c '=m$' out/.config || true)"
+          echo "=== kconfig knows ARCH_KALAMA? ==="
+          grep -c 'source "arch/arm64/Kconfig.platforms"' arch/arm64/Kconfig || true
+          grep -c 'config ARCH_KALAMA' arch/arm64/Kconfig.platforms || echo "  ARCH_KALAMA definition MISSING"
           echo "=== config entries ==="
           grep -c '^CONFIG' out/.config || true
           echo "=== driver options of interest ==="
