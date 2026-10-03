@@ -87,6 +87,10 @@ jobs:
           for d in drivers/staging/qcacld-3.0 drivers/staging/fw-api; do
             [ -d "vermeer/$d" ] && rsync -a "vermeer/$d/" "kernel/$d/"
           done
+          # 5.15 dt-bindings/uapi headers (qcom,ipcc.h etc.) are referenced by
+          # the BSP drivers; merge them without clobbering 6.6 headers.
+          rsync -a --ignore-existing vermeer/include/ kernel/include/
+          test -f kernel/include/dt-bindings/soc/qcom,ipcc.h && echo "qcom,ipcc.h merged"
           echo "=== copied tree stats ==="
           du -sh kernel/drivers/gpu/drm/msm kernel/drivers/media/platform/msm kernel/drivers/soc/qcom 2>/dev/null
           find kernel -name '*.ko' -o -name 'modules.order' | head -n1 >/dev/null || true
