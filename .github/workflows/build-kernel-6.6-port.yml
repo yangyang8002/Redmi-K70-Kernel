@@ -132,6 +132,15 @@ jobs:
             n=$((n+1))
           done
           echo "class_create fixes applied"
+          # 5.15 BSP pinctrl drivers (kalama/crow) need the 5.15 msm_pingroup
+          # layout (wake_reg/wake_bit fields), which differs from upstream
+          # 6.6's. Give them a private copy of the 5.15 header instead of
+          # clobbering the 6.6 one that upstream pinctrl-msm.c still uses.
+          cp ../vermeer/drivers/pinctrl/qcom/pinctrl-msm.h drivers/pinctrl/qcom/pinctrl-msm-v15.h
+          for f in drivers/pinctrl/qcom/pinctrl-kalama.c drivers/pinctrl/qcom/pinctrl-crow.c; do
+            [ -f "$f" ] && sed -i 's/#include "pinctrl-msm.h"/#include "pinctrl-msm-v15.h"/' "$f"
+          done
+          grep -l 'pinctrl-msm-v15' drivers/pinctrl/qcom/*.c 2>/dev/null || true
           # The 5.15 SoC platform symbols (ARCH_KALAMA/CROW/KAKA) do not exist
           # in the 6.6 tree, so every vendor-driver Kconfig that depends on
           # them was silently dropped at olddefconfig and no .ko was built.
