@@ -152,6 +152,20 @@ jobs:
           EOF
           echo "created stub drivers/misc/hwid/hwid.h"
 
+      - name: Commit tree fixes for a clean vermagic
+        run: |
+          set -e
+          cd kernel
+          # The Kconfig patches + hwid.h stub make setlocalversion append
+          # "-dirty" to the kernel release (5.15.78-g53ef33eacdc4-dirty), which
+          # breaks vermagic equality with the official build and with the GKI
+          # modules inside the stock init_boot ramdisk. Committing the fixes
+          # gives the exact official release string: 5.15.78-g53ef33eacdc4.
+          printf 'out/\nbuild.log\n' >> .gitignore
+          git add -A
+          git -c user.email=ci@localhost -c user.name=ci commit -q -m 'CI: OSS tree fixes (dangling Kconfig source, hwid stub)' || true
+          git log --oneline -2
+
       - name: Set up AOSP prebuilt clang (official toolchain pinned by the kernel tree)
         env:
           TOOLCHAIN_MODE: ${{ inputs.toolchain || 'auto' }}
@@ -322,6 +336,113 @@ jobs:
           echo "=== staged modules ==="
           find "$GITHUB_WORKSPACE/artifacts/modules/lib/modules" -name '*.ko' | wc -l
 
+      - name: Package boot, init_boot and vendor_boot images (mkbootimg)
+        run: |
+          set -eo pipefail
+          cd kernel
+          A="$GITHUB_WORKSPACE/artifacts"
+          STOCK="$GITHUB_WORKSPACE/stock"
+          MK="$RUNNER_TEMP/mkbootimg.py"
+          UN="$RUNNER_TEMP/unpack_bootimg.py"
+
+          # ---- official AOSP packaging tools (single-file, base64) ----
+          curl -fsSL --retry 3 'https://android.googlesource.com/platform/system/tools/mkbootimg/+/refs/heads/main/mkbootimg.py?format=TEXT' | base64 -d > "$MK"
+          curl -fsSL --retry 3 'https://android.googlesource.com/platform/system/tools/mkbootimg/+/refs/heads/main/unpack_bootimg.py?format=TEXT' | base64 -d > "$UN"
+          # Unsigned images: drop the GKI certificate import (needs an AOSP
+          # module that is not shipped with the single file).
+          sed -i '/from gki.generate_gki_certificate import/d' "$MK"
+          python3 "$MK" --help > /dev/null && echo "mkbootimg ready"
+
+          # ---- kernel release + staged modules ----
+          KVER="$(cat out/include/config/kernel.release)"
+          echo "kernel release: $KVER"
+          STAGE="$A/modules/lib/modules/$KVER"
+          test -d "$STAGE"
+
+          # ---- vendor ramdisk: official first-stage module lists ----
+          # Official flow (build.config.msm.common): vendor_boot ramdisk holds
+          # the modules of SYSTEM_DLKM_MODULES_LIST (gki_system_dlkm_modules)
+          # plus modules.list.msm.vermeer; everything else goes to vendor_dlkm.
+          {
+            awk -F'/' '{print $NF}' android/gki_system_dlkm_modules | grep -v '^#' || true
+            grep -v '^#' modules.list.msm.vermeer || true
+          } | sort -u > "$RUNNER_TEMP/official.list"
+          (cd "$STAGE" && ls -1 | grep '\.ko$' | sort) > "$RUNNER_TEMP/built.list"
+          VRD="$RUNNER_TEMP/vramdisk"
+          VDEST="$VRD/lib/modules/$KVER"
+          mkdir -p "$VDEST"
+          comm -12 "$RUNNER_TEMP/official.list" "$RUNNER_TEMP/built.list" > "$VDEST/modules.load"
+          echo "vendor_boot modules.load: $(wc -l < "$VDEST/modules.load") entries"
+          (cd "$STAGE" && while IFS= read -r m; do cp "$m" "$VDEST/"; done < "$VDEST/modules.load")
+          sed -n 's/^blocklist //p' modules.vendor_blocklist.msm.vermeer > "$VDEST/modules.blocklist" || true
+          depmod -b "$VRD" "$KVER"
+          (cd "$VRD" && find . -print0 | cpio --null -o -H newc --quiet | gzip -9) > "$A/vendor_ramdisk.cpio.gz"
+
+          # ---- vendor_dlkm: remaining modules ----
+          comm -13 "$RUNNER_TEMP/official.list" "$RUNNER_TEMP/built.list" > "$RUNNER_TEMP/vendor_dlkm.list"
+          echo "vendor_dlkm modules: $(wc -l < "$RUNNER_TEMP/vendor_dlkm.list")"
+          VD="$RUNNER_TEMP/vdlkm"
+          mkdir -p "$VD/lib/modules/$KVER"
+          (cd "$STAGE" && while IFS= read -r m; do cp "$m" "$VD/lib/modules/$KVER/"; done < "$RUNNER_TEMP/vendor_dlkm.list")
+          cp "$RUNNER_TEMP/vendor_dlkm.list" "$VD/vendor_dlkm.modules.load"
+          tar -czf "$A/vendor_dlkm-modules.tar.gz" -C "$VD" .
+          cp "$VDEST/modules.load" "$A/vendor_boot.modules.load"
+
+          # ---- optional stock images from the repo 'stock/' directory ----
+          DTB_ARGS=""
+          DTB_NOTE="without dtb"
+          if [ -d "$STOCK" ] && [ -f "$STOCK/vendor_boot.img" ]; then
+            mkdir -p "$RUNNER_TEMP/unpack_vboot"
+            python3 "$UN" --vendor_boot "$STOCK/vendor_boot.img" --out "$RUNNER_TEMP/unpack_vboot" || true
+            DTB="$(find "$RUNNER_TEMP/unpack_vboot" -name '*.dtb' | head -n1)"
+            BC="$(find "$RUNNER_TEMP/unpack_vboot" -name 'bootconfig*' | head -n1)"
+            if [ -n "$DTB" ]; then
+              DTB_ARGS="--dtb $DTB"
+              DTB_NOTE="with stock dtb"
+            fi
+            if [ -n "$BC" ]; then
+              DTB_ARGS="$DTB_ARGS --vendor_bootconfig $BC"
+              DTB_NOTE="$DTB_NOTE + bootconfig"
+            fi
+          fi
+
+          # ---- boot.img (header v4, official parameters) ----
+          # BOOT_IMAGE_HEADER_VERSION=4 / BASE_ADDRESS=0x80000000 / PAGE_SIZE=4096
+          # from build.config.msm.vermeer; GKI boot v4 cmdline is empty.
+          # Unsigned (no GKI boot_signature - not available without Google's
+          # certification key; flash with AVB verification disabled).
+          python3 "$MK" --header_version 4 \
+            --kernel out/arch/arm64/boot/Image \
+            --cmdline "" \
+            --base 0x80000000 \
+            --pagesize 4096 \
+            --os_version 14.0.0 --os_patch_level 2024-06 \
+            -o "$A/boot.img"
+
+          # ---- vendor_boot.img (header v4, official cmdline) ----
+          # KERNEL_VENDOR_CMDLINE from build.config.msm.vermeer (gki variant).
+          python3 "$MK" --header_version 4 \
+            --vendor_boot "$A/vendor_boot.img" \
+            --vendor_ramdisk "$A/vendor_ramdisk.cpio.gz" \
+            --vendor_cmdline "console=ttyMSM0,115200n8 earlycon=qcom_geni,0x00a9C000 qcom_geni_serial.con_enabled=1 nosoftlockup bootconfig" \
+            --base 0x80000000 \
+            --pagesize 4096 \
+            --board android \
+            $DTB_ARGS
+          echo "vendor_boot packed: $DTB_NOTE"
+
+          # ---- init_boot.img: stock pass-through when provided ----
+          # The generic ramdisk contains AOSP userspace (init binary etc.) and
+          # is NOT part of the kernel source tree; it is reused unchanged.
+          # Compatibility: this build's vermagic equals the official
+          # 5.15.78-g53ef33eacdc4, so stock init_boot GKI modules still load.
+          if [ -f "$STOCK/init_boot.img" ]; then
+            cp "$STOCK/init_boot.img" "$A/init_boot.img"
+            echo "stock init_boot.img included (pass-through)"
+          else
+            echo "NOTE: init_boot.img not packed - provide stock/init_boot.img (from the official OTA payload) and rerun; the stock image is compatible as-is with this kernel."
+          fi
+
       - name: Collect artifacts
         env:
           LTO_MODE: ${{ inputs.lto || 'thin' }}
@@ -352,6 +473,9 @@ jobs:
             echo "lto mode        : $LTO_MODE"
             echo "werror          : disabled + KCFLAGS -Wno-error=implicit-int (newer clang compatibility)"
             echo "hwid.h          : stubbed (drivers/misc/hwid/ stripped from OSS tree)"
+            echo "boot image      : boot.img (v4, official params, unsigned - no GKI boot_signature)"
+            echo "vendor_boot     : vendor_boot.img (v4, official cmdline, official module lists; dtb only when stock/vendor_boot.img is provided - DTS is stripped from the OSS tree)"
+            echo "init_boot       : pass-through stock/init_boot.img when provided (generic ramdisk is AOSP userspace; vermagic matches the official release)"
             echo "compiler        : $(clang --version | head -n1)"
             echo "config          : $GKI_FRAGMENT + $VERMEER_FRAGMENT -> $MERGED_DEFCONFIG"
             echo "targets         : $BUILD_TARGETS (official: Image modules per build.config.aarch64)"
