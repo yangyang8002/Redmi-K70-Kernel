@@ -254,10 +254,10 @@ jobs:
                 # minidump module object set: 5.15 collects minidump pieces
                 # via minidump-$(CONFIG_QCOM_MINIDUMP_PANIC_DUMP) variables.
                 minidump-*) grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
-                # composite-module object set definitions (e.g. qcom_logbuf_vh-y
-                # := qcom_logbuf_vendor_hooks.o): without them the obj- target
-                # has no build rule at all and make dies with "No rule".
-                *-y[[:space:]]*:=*|*-y[[:space:]]*+=*)
+                # composite-module object set definitions: allowlist only.
+                # The 5.15 clk-qcom-y members (vdd-class.o, clk-debug.o) need
+                # the 5.15 common.h and would pollute the 6.6 clk-qcom set.
+                qcom_logbuf_vh-*)
                   grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
               esac
             done < "$v15m"
