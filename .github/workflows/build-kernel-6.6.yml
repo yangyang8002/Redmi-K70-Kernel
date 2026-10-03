@@ -1,0 +1,430 @@
+name: Build Redmi K70 Kernel (EXPERIMENTAL linux-6.6)
+
+on:
+  workflow_dispatch:
+    inputs:
+      toolchain:
+        description: 'Compiler toolchain (apt clang recommended for 6.6; auto tries AOSP prebuilt first)'
+        required: false
+        default: 'apt'
+        type: choice
+        options:
+          - apt
+          - auto
+          - aosp
+      lto:
+        description: 'LTO mode (GKI 6.6 default is thin)'
+        required: false
+        default: 'thin'
+        type: choice
+        options:
+          - thin
+          - full
+          - none
+      build_targets:
+        description: 'make targets'
+        required: false
+        default: 'Image modules'
+        type: string
+  push:
+    branches: [ linux-6.6 ]
+
+concurrency:
+  group: build-redmi-k70-kernel-66-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KERNEL_REPO: https://android.googlesource.com/kernel/common.git
+  KERNEL_BRANCH: android15-6.6
+  GKI_DEFCONFIG: gki_defconfig
+  VERMEER_FRAGMENT_URL: https://raw.githubusercontent.com/MiCode/Xiaomi_Kernel_OpenSource/53ef33eacdc4f7ac737451e4cfc91963d59e3956/arch/arm64/configs/vendor/vermeer_GKI.config
+  SUSFS_BRANCH: gki-android15-6.6
+  BUILD_TARGETS: ${{ inputs.build_targets || 'Image modules' }}
+
+jobs:
+  build:
+    name: Build experimental 6.6 kernel for vermeer
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Maximize runner disk space
+        run: |
+          set -e
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          set -e
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex cpio zip unzip curl wget git \
+            libssl-dev libelf-dev libncurses-dev \
+            zstd lz4 lzop u-boot-tools kmod dwarves \
+            python3 python-is-python3 clang lld llvm
+          clang --version | head -n1
+
+      - name: Clone AOSP GKI android15-6.6 baseline
+        run: |
+          set -e
+          git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
+          echo "=== HEAD commit ==="
+          git -C kernel log -1 --format='%H%n%s'
+          echo "=== kernel version ==="
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION) *=' kernel/Makefile
+
+      - name: Fetch vermeer vendor config fragment (5.15 MiCode)
+        run: |
+          set -e
+          mkdir -p kernel/arch/arm64/configs/vendor
+          curl -fsSL --retry 3 -o kernel/arch/arm64/configs/vendor/vermeer_GKI.config "$VERMEER_FRAGMENT_URL"
+          wc -l kernel/arch/arm64/configs/vendor/vermeer_GKI.config
+
+      - name: Integrate SukiSU-Ultra (builtin/SUSFS branch) + SUSFS patches
+        run: |
+          set -eo pipefail
+          # ---- SukiSU-Ultra kernel integration (builtin branch: SUSFS-ready
+          # static-hook kernel side, full KSU_SUSFS Kconfig menu built in) ----
+          cd kernel
+          curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+          (cd KernelSU && git log -1 --format='SukiSU-Ultra builtin: %h %s') | tee ../ksu_version.txt
+          # ---- SUSFS kernel patches for GKI android15-6.6 ----
+          cd "$GITHUB_WORKSPACE"
+          git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
+          (cd susfs4ksu && git log -1 --format='susfs4ksu %SUSFS_BRANCH%: %h') > susfs_version.txt
+          cd kernel
+          cp "../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch" .
+          cp ../susfs4ksu/kernel_patches/fs/susfs.c fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/
+          patch -p1 --forward --fuzz=3 < 50_add_susfs_in_gki-android15-6.6.patch || true
+          # --- compatibility shims (same as the 5.15 branch) ---
+          if ! grep -qE '^[[:space:]]*#define VMA_PAD_START' fs/proc/task_mmu.c; then
+            if ! grep -rq 'define VMA_PAD_START' include/; then
+              { printf '#ifndef VMA_PAD_START\n#define VMA_PAD_START(vma) ((vma)->vm_end)\n#endif\n'; cat fs/proc/task_mmu.c; } > /tmp/task_mmu.c && mv /tmp/task_mmu.c fs/proc/task_mmu.c
+            fi
+          fi
+          grep -n 'define VMA_PAD_START' fs/proc/task_mmu.c || echo 'VMA_PAD_START defined in kernel headers (6.6)'
+          if ! grep -q '^int ksu_handle_post_execveat_sucompat' fs/exec.c; then
+            cat >> fs/exec.c <<'SHIM'
+
+          #ifdef CONFIG_KSU_SUSFS
+          /* Compatibility shim for SukiSU-Ultra: no post-exec work is needed. */
+          int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
+                                                void *envp, int *flags, int *retval)
+          {
+              return 0;
+          }
+          #endif
+          SHIM
+          fi
+          tail -n 12 fs/exec.c
+          echo "=== .rej files (should be empty) ==="
+          find . -name '*.rej' -not -path './out/*' -print | tee ../susfs_rejects.txt
+          echo "=== KSU integration markers ==="
+          test -d KernelSU/kernel && echo "KernelSU kernel dir OK"
+          grep -n 'kernelsu' drivers/Makefile
+          grep -n 'drivers/kernelsu/Kconfig' drivers/Kconfig
+          git status --porcelain --untracked-files=all > "$GITHUB_WORKSPACE/modified_files.txt" || true
+          wc -l < "$GITHUB_WORKSPACE/modified_files.txt"
+
+      - name: Commit tree fixes for a clean vermagic
+        run: |
+          set -e
+          cd kernel
+          printf 'out/\nbuild.log\n' >> .gitignore
+          git add -A 2>/dev/null || git add -A
+          git -c user.email=ci@localhost -c user.name=ci commit -q -m 'CI: SukiSU-Ultra + SUSFS integration for clean vermagic' || true
+          git log --oneline -2
+
+      - name: Set up AOSP prebuilt clang (optional for 6.6)
+        env:
+          TOOLCHAIN_MODE: ${{ inputs.toolchain || 'apt' }}
+        run: |
+          set -e
+          if [ "$TOOLCHAIN_MODE" = "apt" ]; then
+            echo "toolchain=apt requested (recommended for 6.6)."
+            echo "USING_TOOLCHAIN=apt clang ($(clang --version | head -n1))" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          ok=0
+          for ref in main-kernel-build-2024 main-kernel-build-2023 master; do
+            url="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/$ref/clang-r487747c.tar.gz"
+            echo "Trying $url"
+            if curl -fsSL --retry 2 --connect-timeout 20 --max-time 900 -o /tmp/aosp-clang.tar.gz "$url" \
+               && tar -tzf /tmp/aosp-clang.tar.gz >/dev/null 2>&1; then
+              mkdir -p "$GITHUB_WORKSPACE/aosp-clang"
+              tar -xzf /tmp/aosp-clang.tar.gz -C "$GITHUB_WORKSPACE/aosp-clang"
+              if [ -x "$GITHUB_WORKSPACE/aosp-clang/bin/clang" ]; then
+                echo "$GITHUB_WORKSPACE/aosp-clang/bin" >> "$GITHUB_PATH"
+                echo "USING_TOOLCHAIN=AOSP prebuilt clang (from ${ref})" >> "$GITHUB_ENV"
+                ok=1
+                break
+              fi
+            fi
+          done
+          if [ "$ok" != "1" ]; then
+            if [ "$TOOLCHAIN_MODE" = "aosp" ]; then
+              echo "ERROR: toolchain=aosp requested but AOSP prebuilt could not be downloaded."
+              exit 1
+            fi
+            echo "AOSP prebuilt unavailable, falling back to apt clang."
+            echo "USING_TOOLCHAIN=apt clang ($(clang --version | head -n1))" >> "$GITHUB_ENV"
+          fi
+
+      - name: Show active toolchain
+        run: |
+          which clang ld.lld
+          clang --version | head -n1
+          echo "toolchain: $USING_TOOLCHAIN"
+
+      - name: Restore kernel build tree cache
+        uses: actions/cache/restore@v4
+        with:
+          path: kernel/out
+          key: k70-66-out-${{ env.KERNEL_BRANCH }}-${{ github.run_id }}
+          restore-keys: k70-66-out-${{ env.KERNEL_BRANCH }}-
+
+      - name: Generate .config (GKI 6.6 gki_defconfig + vermeer vendor fragment)
+        run: |
+          set -e
+          cd kernel
+          config_sane() {
+            [ -f out/.config ] || return 1
+            for sym in CONFIG_ARM64 CONFIG_MMU CONFIG_MODULES CONFIG_DRM; do
+              grep -q "^${sym}=y" out/.config || return 1
+            done
+            return 0
+          }
+          if config_sane; then
+            echo "sane out/.config restored from build cache - keeping it as-is for incremental resume"
+          else
+            make O=out ARCH=arm64 LLVM=1 "$GKI_DEFCONFIG" < /dev/null
+            # Qualcomm-style fragment merge: gki_defconfig + vermeer_GKI.config.
+            # Options with no source in the GKI 6.6 tree drop out at olddefconfig.
+            ./scripts/kconfig/merge_config.sh -m out/.config arch/arm64/configs/vendor/vermeer_GKI.config || true
+            make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
+          fi
+          echo "=== config sanity ==="
+          if ! config_sane; then
+            echo "ERROR: .config is missing critical symbols"
+            exit 1
+          fi
+          entries=$(grep -c '^CONFIG' out/.config || true)
+          echo "config entries (enabled): $entries"
+          if [ "$entries" -lt 1500 ]; then
+            echo "ERROR: .config suspiciously small ($entries enabled entries)"
+            exit 1
+          fi
+          echo "=== kernel release ==="
+          make O=out ARCH=arm64 LLVM=1 kernelrelease < /dev/null
+
+      - name: 'Apply LTO mode (default ThinLTO) and turn off WERROR'
+        env:
+          LTO_MODE: ${{ inputs.lto || 'thin' }}
+        run: |
+          set -e
+          cd kernel
+          echo "Requested LTO mode: $LTO_MODE"
+          case "$LTO_MODE" in
+            thin) want="CONFIG_LTO_CLANG_THIN=y" ;;
+            full) want="CONFIG_LTO_CLANG_FULL=y" ;;
+            none) want="CONFIG_LTO_NONE=y" ;;
+          esac
+          werror_off=0
+          grep -q '^# CONFIG_WERROR is not set' out/.config && werror_off=1
+          if grep -q "^$want$" out/.config && [ "$werror_off" = 1 ]; then
+            echo "$want set and WERROR off already - no config rewrite needed"
+          else
+            ./scripts/config --file out/.config -d LTO_CLANG_FULL -d LTO_CLANG_THIN -d LTO_NONE
+            ./scripts/config --file out/.config -e ${want%%=*}
+            ./scripts/config --file out/.config -d WERROR
+            make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
+          fi
+          grep -E 'CONFIG_LTO|CONFIG_WERROR' out/.config || true
+          if [ "$LTO_MODE" = "thin" ] && ! grep -q 'CONFIG_LTO_CLANG_THIN=y' out/.config; then
+            echo "ERROR: ThinLTO was not enabled in final config"
+            exit 1
+          fi
+
+      - name: Enable SukiSU-Ultra + SUSFS kernel options
+        run: |
+          set -e
+          cd kernel
+          ./scripts/config --file out/.config \
+            -e KSU \
+            -e KSU_SUSFS \
+            -e KSU_SUSFS_SUS_PATH \
+            -e KSU_SUSFS_SUS_MOUNT \
+            -e KSU_SUSFS_SUS_KSTAT \
+            -e KSU_SUSFS_SUS_MAP \
+            -e KSU_SUSFS_SPOOF_UNAME \
+            -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            -e KSU_SUSFS_OPEN_REDIRECT \
+            -e KSU_SUSFS_ENABLE_LOG \
+            -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
+          make O=out ARCH=arm64 LLVM=1 syncconfig < /dev/null
+          echo "=== SukiSU-Ultra + SUSFS config ==="
+          grep -E 'CONFIG_KSU(_|=/)' out/.config || true
+          grep -E 'CONFIG_KSU_SUSFS' out/.config || true
+          grep -q '^CONFIG_KSU=y' out/.config
+          grep -q '^CONFIG_KSU_SUSFS=y' out/.config
+          echo "KSU + SUSFS options all enabled"
+
+      - name: Build kernel
+        timeout-minutes: 270
+        run: |
+          set -eo pipefail
+          cd kernel
+          find . -not -path './out*' -exec touch -d @0 {} + 2>/dev/null || true
+          if [ -f "$GITHUB_WORKSPACE/modified_files.txt" ]; then
+            awk '{print $NF}' "$GITHUB_WORKSPACE/modified_files.txt" | while IFS= read -r f; do
+              [ -e "$f" ] && touch "$f" || true
+            done
+            echo "re-touched files modified this run: $(wc -l < "$GITHUB_WORKSPACE/modified_files.txt")"
+          fi
+          make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 \
+               KCFLAGS='-Wno-error=implicit-int -Wno-error=implicit-function-declaration -Wno-error=strict-prototypes' \
+               $BUILD_TARGETS < /dev/null 2>&1 | tee -a build.log
+          echo "=== build output ==="
+          ls -lh out/arch/arm64/boot/Image 2>/dev/null || true
+          echo "=== modules built ==="
+          find out -name '*.ko' 2>/dev/null | wc -l
+
+      - name: Save kernel build tree cache (resume on timeout)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: kernel/out
+          key: k70-66-out-${{ env.KERNEL_BRANCH }}-${{ github.run_id }}
+
+      - name: Stage modules (modules_install + depmod)
+        run: |
+          set -e
+          cd kernel
+          make O=out ARCH=arm64 LLVM=1 INSTALL_MOD_PATH="$GITHUB_WORKSPACE/artifacts/modules" modules_install < /dev/null
+          find "$GITHUB_WORKSPACE/artifacts/modules/lib/modules" -name '*.ko' | wc -l
+
+      - name: Package boot and vendor_boot images (EXPERIMENTAL)
+        run: |
+          set -eo pipefail
+          cd kernel
+          A="$GITHUB_WORKSPACE/artifacts"
+          STOCK="$GITHUB_WORKSPACE/stock"
+          MK="$RUNNER_TEMP/mkbootimg.py"
+          UN="$RUNNER_TEMP/unpack_bootimg.py"
+          curl -fsSL --retry 3 'https://android.googlesource.com/platform/system/tools/mkbootimg/+/refs/heads/main/mkbootimg.py?format=TEXT' | base64 -d > "$MK"
+          curl -fsSL --retry 3 'https://android.googlesource.com/platform/system/tools/mkbootimg/+/refs/heads/main/unpack_bootimg.py?format=TEXT' | base64 -d > "$UN"
+          sed -i '/from gki.generate_gki_certificate import/d' "$MK"
+          python3 "$MK" --help > /dev/null && echo "mkbootimg ready"
+
+          STAGE_BASE="$A/modules/lib/modules"
+          KVER="$(ls "$STAGE_BASE" | head -n1)"
+          STAGE="$STAGE_BASE/$KVER"
+          echo "kernel release: $KVER"
+          test -n "$KVER" && test -d "$STAGE"
+
+          # EXPERIMENTAL 6.6: the GKI tree has no vermeer vendor module lists
+          # (gki_system_dlkm_modules / modules.list.msm.vermeer are 5.15-tree
+          # files). Ship every built module flat in the vendor_boot ramdisk.
+          VRD="$RUNNER_TEMP/vramdisk"
+          VDEST="$VRD/lib/modules/$KVER"
+          mkdir -p "$VDEST"
+          find "$STAGE" -name '*.ko' -printf '%f\n' | sort -u > "$VDEST/modules.load"
+          echo "vendor_boot modules.load: $(wc -l < "$VDEST/modules.load") entries"
+          find "$STAGE" -name '*.ko' -print0 | while IFS= read -r -d '' p; do
+            b="$(basename "$p")"
+            if grep -qx "$b" "$VDEST/modules.load"; then cp -f "$p" "$VDEST/$b"; fi
+          done
+          cp "$STAGE/modules.builtin" "$VDEST/" 2>/dev/null || true
+          depmod -b "$VRD" "$KVER"
+          (cd "$VRD" && find . -print0 | cpio --null -o -H newc --quiet | gzip -9) > "$A/vendor_ramdisk.cpio.gz"
+          cp "$VDEST/modules.load" "$A/vendor_boot.modules.load"
+
+          DTB_ARGS=""
+          DTB_NOTE="without dtb"
+          if [ -d "$STOCK" ] && [ -f "$STOCK/vendor_boot.img" ]; then
+            mkdir -p "$RUNNER_TEMP/unpack_vboot"
+            python3 "$UN" --vendor_boot "$STOCK/vendor_boot.img" --out "$RUNNER_TEMP/unpack_vboot" || true
+            DTB="$(find "$RUNNER_TEMP/unpack_vboot" -name '*.dtb' | head -n1)"
+            BC="$(find "$RUNNER_TEMP/unpack_vboot" -name 'bootconfig*' | head -n1)"
+            if [ -n "$DTB" ]; then
+              DTB_ARGS="--dtb $DTB"
+              DTB_NOTE="with stock (5.15) dtb - EXPECT MISMATCH with the 6.6 kernel"
+            fi
+            if [ -n "$BC" ]; then
+              DTB_ARGS="$DTB_ARGS --vendor_bootconfig $BC"
+              DTB_NOTE="$DTB_NOTE + bootconfig"
+            fi
+          fi
+
+          python3 "$MK" --header_version 4 \
+            --kernel out/arch/arm64/boot/Image \
+            --cmdline "" \
+            --base 0x80000000 \
+            --pagesize 4096 \
+            --os_version 15.0.0 --os_patch_level 2025-03 \
+            -o "$A/boot.img"
+
+          python3 "$MK" --header_version 4 \
+            --vendor_boot "$A/vendor_boot.img" \
+            --vendor_ramdisk "$A/vendor_ramdisk.cpio.gz" \
+            --vendor_cmdline "console=ttyMSM0,115200n8 earlycon=qcom_geni,0x00a9C000 qcom_geni_serial.con_enabled=1 nosoftlockup bootconfig" \
+            --base 0x80000000 \
+            --pagesize 4096 \
+            --board android \
+            $DTB_ARGS
+          echo "vendor_boot packed: $DTB_NOTE"
+
+      - name: Collect artifacts
+        env:
+          LTO_MODE: ${{ inputs.lto || 'thin' }}
+        run: |
+          set -e
+          cd kernel
+          A="$GITHUB_WORKSPACE/artifacts"
+          RELEASE="$(cat out/include/config/kernel.release)"
+          mkdir -p "$A/boot"
+          cp out/arch/arm64/boot/Image "$A/boot/" 2>/dev/null || true
+          cp out/System.map "$A/boot/" 2>/dev/null || true
+          cp out/Module.symvers "$A/" 2>/dev/null || true
+          cp out/modules.builtin "$A/" 2>/dev/null || true
+          cp out/modules.builtin.modinfo "$A/" 2>/dev/null || true
+          cp out/.config "$A/kernel.config"
+          cp build.log "$A/" 2>/dev/null || true
+          {
+            echo "Redmi K70 (vermeer) - EXPERIMENTAL linux-6.6 GKI baseline build"
+            echo "===================================================="
+            echo "!!!! EXPERIMENTAL - NOT FOR DAILY USE !!!!"
+            echo "This is the AOSP GKI android15-6.6 generic kernel merged with the"
+            echo "vermeer vendor config fragment. It is NOT a usable daily kernel:"
+            echo "vermeer device drivers (display/camera/modem/sensors/...) live in"
+            echo "the 5.15 vendor tree only, and the stock vendor modules are built"
+            echo "against the android13-5.15 KMI. Do NOT flash this on your phone."
+            echo "!!!! EXPERIMENTAL - NOT FOR DAILY USE !!!!"
+            echo "===================================================="
+            echo "build date (UTC) : $(date -u '+%Y-%m-%d %H:%M:%S')"
+            echo "kernel source   : $KERNEL_REPO"
+            echo "branch          : $KERNEL_BRANCH"
+            echo "source commit   : $(git rev-parse HEAD~1) (upstream AOSP)"
+            echo "ci fix commit   : $(git log -1 --format='%h %s')"
+            echo "kernel release  : $RELEASE"
+            echo "toolchain       : $USING_TOOLCHAIN"
+            echo "lto mode        : $LTO_MODE"
+            echo "root solution   : $(cat "$GITHUB_WORKSPACE/ksu_version.txt")"
+            echo "susfs           : $(cat "$GITHUB_WORKSPACE/susfs_version.txt") + full option set"
+            echo "susfs rejects   : $(wc -l < "$GITHUB_WORKSPACE/susfs_rejects.txt") .rej file(s)"
+            echo "config          : gki_defconfig (AOSP 6.6) + vermeer_GKI.config (MiCode 5.15 fragment)"
+            echo "compiler        : $(clang --version | head -n1)"
+            echo "targets         : $BUILD_TARGETS"
+          } > "$A/BUILD-INFO.txt"
+          tar -czf "$A/modules.tar.gz" -C "$A/modules" .
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: redmi-k70-vermeer-kernel-66-experimental
+          path: artifacts/*
+          if-no-files-found: error
