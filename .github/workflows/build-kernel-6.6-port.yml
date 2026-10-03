@@ -159,6 +159,11 @@ jobs:
             curl -fsSL --retry 3 -o arch/arm64/configs/vendor/vermeer_GKI.config "$VERMEER_FRAGMENT_URL"
           }
           make O=out ARCH=arm64 LLVM=1 gki_defconfig < /dev/null
+          # make O=out writes the config to out/.config, but merge_config's
+          # base must live in the source root. Copy it back first, otherwise
+          # merge_config starts from an empty base and the gki_defconfig
+          # settings (incl. CONFIG_MODULES=y) are lost, degrading every =m.
+          cp out/.config .config
           ./scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/vendor/vermeer_GKI.config || true
           echo "=== PRE-OLDDEFCONFIG (.config right after merge) ==="
           grep -E '^CONFIG_(MODULES|ARCH_KALAMA|PINCTRL_KALAMA|QCOM_LLCC)=|^# CONFIG_(MODULES|ARCH_KALAMA)' .config || echo "  none of the key symbols present pre-olddefconfig"
