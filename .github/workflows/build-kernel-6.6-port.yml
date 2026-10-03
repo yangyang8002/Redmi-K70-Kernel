@@ -132,13 +132,6 @@ jobs:
             n=$((n+1))
           done
           echo "class_create fixes applied"
-          # QTI_CRYPTO_COMMON depends on SCSI_UFS_CRYPTO_QTI/MMC_CRYPTO_QTI,
-          # 5.15-only symbols the 6.6 tree does not define (the 5.15 UFS
-          # stack was never copied), so olddefconfig kept it off and the
-          # crypto-qti-platform.h stubs collided with the real functions.
-          # Drop that one dependency line so the lib can build standalone.
-          sed -i '/^config QTI_CRYPTO_COMMON/,/^config /{ /depends on SCSI_UFS_CRYPTO_QTI/d; }' drivers/soc/qcom/Kconfig
-          grep -A3 '^config QTI_CRYPTO_COMMON' drivers/soc/qcom/Kconfig | head -n 4 || true
           # The 5.15 BSP hwkm headers include userspace <stdbool.h> /
           # <stddef.h>; the kernel's bool and size_t already come from
           # linux/types.h. Drop such includes.
@@ -221,6 +214,14 @@ jobs:
           for pair in drivers/soc/qcom drivers/clk/qcom drivers/pinctrl/qcom; do
             echo "$pair: $(grep -c '^config ' $pair/Kconfig) total configs"
           done
+          # QTI_CRYPTO_COMMON depends on SCSI_UFS_CRYPTO_QTI/MMC_CRYPTO_QTI,
+          # 5.15-only symbols the 6.6 tree does not define (the 5.15 UFS
+          # stack was never copied), so olddefconfig kept it off and the
+          # crypto-qti-platform.h stubs collided with the real functions.
+          # Drop that one dependency line (AFTER the merge, so the block
+          # actually exists) so the lib can build standalone.
+          sed -i '/^config QTI_CRYPTO_COMMON/,/^config /{ /depends on SCSI_UFS_CRYPTO_QTI/d; }' drivers/soc/qcom/Kconfig
+          grep -A3 '^config QTI_CRYPTO_COMMON' drivers/soc/qcom/Kconfig | head -n 4 || true
           # Same story for the Makefiles: rsync --ignore-existing never copied
           # the 5.15 Makefiles, so obj-$(CONFIG_...) build rules for BSP modules
           # (SM_GCC_KALAMA, PINCTRL_KALAMA, ...) were missing and modules with a
