@@ -245,6 +245,48 @@ jobs:
           key: port-66-out-${{ github.run_id }}
           restore-keys: port-66-out-
 
+      - name: Package port output (Image + modules + match report)
+        if: always()
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE/kernel"
+          A="../port-out"
+          rm -rf "$A" && mkdir -p "$A"
+          cp out/arch/arm64/boot/Image "$A/" 2>/dev/null || echo "NO IMAGE"
+          cp out/System.map "$A/" 2>/dev/null || true
+          cp out/.config "$A/kernel.config" 2>/dev/null || true
+          find out -name '*.ko' | while read -r k; do
+            rel="${k#out/}"
+            mkdir -p "$A/$(dirname "$rel")"
+            cp "$k" "$A/$rel"
+          done
+          echo "=== packaged .ko files: $(find "$A" -name '*.ko' | wc -l) ==="
+          if curl -fsSL --retry 3 -o /tmp/vermeer-ml "$VERMEER_MODULE_LIST_URL" 2>/dev/null; then
+            find out -name '*.ko' -printf '%f
+' | sort -u > /tmp/built
+            grep -v '^#' /tmp/vermeer-ml | grep -v '^$' | sed 's/\.ko$//' | sort > /tmp/want
+            echo "=== official vermeer module list: $(wc -l < /tmp/want) entries; built unique modules: $(wc -l < /tmp/built) ==="
+            sed 's/\.ko$//' /tmp/built | sort > /tmp/builtbase
+            echo "--- MATCHED (official list module that got built): $(comm -12 /tmp/want /tmp/builtbase | wc -l) ---"
+            comm -12 /tmp/want /tmp/builtbase > "$A/modules-matched.txt"
+            echo "--- MISSING (official list module NOT built): $(comm -23 /tmp/want /tmp/builtbase | wc -l) ---"
+            comm -23 /tmp/want /tmp/builtbase > "$A/modules-missing.txt"
+            cat "$A/modules-missing.txt" || true
+          else
+            echo "official module list fetch failed"
+          fi
+        env:
+          VERMEER_MODULE_LIST_URL: https://raw.githubusercontent.com/MiCode/Xiaomi_Kernel_OpenSource/bsp-vermeer-t-oss/modules.list.msm.vermeer
+
+      - name: Upload port output (Image + modules)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: port-output-${{ github.run_id }}
+          path: port-out
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Upload diagnostics (always, even on failure)
         if: always()
         uses: actions/upload-artifact@v4
