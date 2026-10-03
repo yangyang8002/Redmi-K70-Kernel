@@ -460,7 +460,10 @@ jobs:
           set -e
           cd kernel
           A="$GITHUB_WORKSPACE/artifacts"
-          RELEASE="$(make O=out ARCH=arm64 LLVM=1 kernelrelease < /dev/null)"
+          # The staged kernel.release (fixed at compile time) is authoritative;
+          # re-running "make kernelrelease" would re-trigger setlocalversion and
+          # can pick up a spurious -g<sha> stat-dirty suffix from the epoch touch.
+          RELEASE="$(cat out/include/config/kernel.release)"
           mkdir -p "$A/boot"
           cp out/arch/arm64/boot/Image "$A/boot/"
           cp out/System.map "$A/boot/" 2>/dev/null || true
@@ -476,8 +479,8 @@ jobs:
             echo "build date (UTC) : $(date -u '+%Y-%m-%d %H:%M:%S')"
             echo "kernel source   : $KERNEL_REPO"
             echo "branch          : $KERNEL_BRANCH"
-            echo "source commit   : $(git log -1 --format='%H')"
-            echo "release commit   : $(git log -1 --format='%s')"
+            echo "source commit   : $(git rev-parse HEAD~1) (upstream MiCode)"
+            echo "ci fix commit   : $(git log -1 --format='%h %s')"
             echo "kernel release  : $RELEASE"
             echo "toolchain       : $USING_TOOLCHAIN"
             echo "lto mode        : $LTO_MODE"
