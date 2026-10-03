@@ -157,10 +157,11 @@ jobs:
           set -e
           cd kernel
           # The Kconfig patches + hwid.h stub make setlocalversion append
-          # "-dirty" to the kernel release (5.15.78-g53ef33eacdc4-dirty), which
-          # breaks vermagic equality with the official build and with the GKI
-          # modules inside the stock init_boot ramdisk. Committing the fixes
-          # gives the exact official release string: 5.15.78-g53ef33eacdc4.
+          # "-dirty" (with the -g<sha> warning prefix, e.g.
+          # 5.15.78-g53ef33eacdc4-dirty) to the kernel release. Committing the
+          # fixes gives exactly what the official build produces from a clean
+          # checkout of this OSS tree: the plain release "5.15.78", so every
+          # built module carries the same vermagic as the official clean build.
           printf 'out/\nbuild.log\n' >> .gitignore
           git add -A
           git -c user.email=ci@localhost -c user.name=ci commit -q -m 'CI: OSS tree fixes (dangling Kconfig source, hwid stub)' || true
@@ -354,36 +355,43 @@ jobs:
           python3 "$MK" --help > /dev/null && echo "mkbootimg ready"
 
           # ---- kernel release + staged modules ----
-          KVER="$(cat out/include/config/kernel.release)"
+          # modules_install stages the tree as lib/modules/<UTS_RELEASE>/kernel/...
+          # Use the actual staged directory name (authoritative UTS_RELEASE).
+          STAGE_BASE="$A/modules/lib/modules"
+          KVER="$(ls "$STAGE_BASE" | head -n1)"
+          STAGE="$STAGE_BASE/$KVER"
           echo "kernel release: $KVER"
-          STAGE="$A/modules/lib/modules/$KVER"
-          test -d "$STAGE"
+          test -n "$KVER" && test -d "$STAGE"
 
           # ---- vendor ramdisk: official first-stage module lists ----
           # Official flow (build.config.msm.common): vendor_boot ramdisk holds
           # the modules of SYSTEM_DLKM_MODULES_LIST (gki_system_dlkm_modules)
           # plus modules.list.msm.vermeer; everything else goes to vendor_dlkm.
+          # Both official lists use plain module basenames; so does modules.load.
           {
             awk -F'/' '{print $NF}' android/gki_system_dlkm_modules | grep -v '^#' || true
             grep -v '^#' modules.list.msm.vermeer || true
           } | sort -u > "$RUNNER_TEMP/official.list"
-          (cd "$STAGE" && ls -1 | grep '\.ko$' | sort) > "$RUNNER_TEMP/built.list"
+          # staged .ko files live under kernel/... subdirs; collect basenames
+          find "$STAGE" -name '*.ko' -printf '%f\n' | sort -u > "$RUNNER_TEMP/built.list" || true
           VRD="$RUNNER_TEMP/vramdisk"
           VDEST="$VRD/lib/modules/$KVER"
-          mkdir -p "$VDEST"
+          VD="$RUNNER_TEMP/vdlkm"
+          mkdir -p "$VDEST" "$VD/lib/modules/$KVER"
           comm -12 "$RUNNER_TEMP/official.list" "$RUNNER_TEMP/built.list" > "$VDEST/modules.load"
+          comm -13 "$RUNNER_TEMP/official.list" "$RUNNER_TEMP/built.list" > "$RUNNER_TEMP/vendor_dlkm.list"
           echo "vendor_boot modules.load: $(wc -l < "$VDEST/modules.load") entries"
-          (cd "$STAGE" && while IFS= read -r m; do cp "$m" "$VDEST/"; done < "$VDEST/modules.load")
+          echo "vendor_dlkm modules: $(wc -l < "$RUNNER_TEMP/vendor_dlkm.list")"
+          # vendor ramdisk lays modules out flat in lib/modules/$KVER/ (GKI layout)
+          find "$STAGE" -name '*.ko' -print0 | while IFS= read -r -d '' p; do
+            b="$(basename "$p")"
+            if grep -qx "$b" "$VDEST/modules.load"; then cp -f "$p" "$VDEST/$b"; fi
+            if grep -qx "$b" "$RUNNER_TEMP/vendor_dlkm.list"; then cp -f "$p" "$VD/lib/modules/$KVER/$b"; fi
+          done
+          cp "$STAGE/modules.builtin" "$VDEST/" 2>/dev/null || true
           sed -n 's/^blocklist //p' modules.vendor_blocklist.msm.vermeer > "$VDEST/modules.blocklist" || true
           depmod -b "$VRD" "$KVER"
           (cd "$VRD" && find . -print0 | cpio --null -o -H newc --quiet | gzip -9) > "$A/vendor_ramdisk.cpio.gz"
-
-          # ---- vendor_dlkm: remaining modules ----
-          comm -13 "$RUNNER_TEMP/official.list" "$RUNNER_TEMP/built.list" > "$RUNNER_TEMP/vendor_dlkm.list"
-          echo "vendor_dlkm modules: $(wc -l < "$RUNNER_TEMP/vendor_dlkm.list")"
-          VD="$RUNNER_TEMP/vdlkm"
-          mkdir -p "$VD/lib/modules/$KVER"
-          (cd "$STAGE" && while IFS= read -r m; do cp "$m" "$VD/lib/modules/$KVER/"; done < "$RUNNER_TEMP/vendor_dlkm.list")
           cp "$RUNNER_TEMP/vendor_dlkm.list" "$VD/vendor_dlkm.modules.load"
           tar -czf "$A/vendor_dlkm-modules.tar.gz" -C "$VD" .
           cp "$VDEST/modules.load" "$A/vendor_boot.modules.load"
@@ -434,8 +442,10 @@ jobs:
           # ---- init_boot.img: stock pass-through when provided ----
           # The generic ramdisk contains AOSP userspace (init binary etc.) and
           # is NOT part of the kernel source tree; it is reused unchanged.
-          # Compatibility: this build's vermagic equals the official
-          # 5.15.78-g53ef33eacdc4, so stock init_boot GKI modules still load.
+          # This build's release string (5.15.78, clean tree) matches what the
+          # official OSS-tree build produces; if the shipped init_boot carries
+          # a different vermagic, its GKI modules must be repacked from this
+          # build instead of passing the stock image through.
           if [ -f "$STOCK/init_boot.img" ]; then
             cp "$STOCK/init_boot.img" "$A/init_boot.img"
             echo "stock init_boot.img included (pass-through)"
@@ -475,7 +485,7 @@ jobs:
             echo "hwid.h          : stubbed (drivers/misc/hwid/ stripped from OSS tree)"
             echo "boot image      : boot.img (v4, official params, unsigned - no GKI boot_signature)"
             echo "vendor_boot     : vendor_boot.img (v4, official cmdline, official module lists; dtb only when stock/vendor_boot.img is provided - DTS is stripped from the OSS tree)"
-            echo "init_boot       : pass-through stock/init_boot.img when provided (generic ramdisk is AOSP userspace; vermagic matches the official release)"
+            echo "init_boot       : pass-through stock/init_boot.img when provided (generic ramdisk is AOSP userspace; release string matches the official clean OSS build)"
             echo "compiler        : $(clang --version | head -n1)"
             echo "config          : $GKI_FRAGMENT + $VERMEER_FRAGMENT -> $MERGED_DEFCONFIG"
             echo "targets         : $BUILD_TARGETS (official: Image modules per build.config.aarch64)"
