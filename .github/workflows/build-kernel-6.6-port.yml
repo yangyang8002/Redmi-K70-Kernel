@@ -320,6 +320,24 @@ jobs:
           # qdss_bridge uses the 5.15-private MHI API (MHI_MAX_MTU, two-arg
           # mhi calls); it is a debug facility not in the official list.
           ./scripts/config --file out/.config -d QCOM_QDSS_BRIDGE
+          # Batch: every soc/qcom target that is fragment=m, NOT in the
+          # official vermeer module list, and built on 5.15-private
+          # frameworks (sleep-stats collectors, dump collectors, BAM/SPS
+          # DMA, slate/tmecom, panel event, hung-task enh, etc). Skipping
+          # all of them does not reduce official module coverage.
+          ./scripts/config --file out/.config \
+            -d QCOM_CPUSS_SLEEP_STATS -d MEM_SHARE_QMI_SERVICE \
+            -d QCOM_SMP2P_SLEEPSTATE -d QSEE_IPC_IRQ_BRIDGE -d QCOM_GLINK \
+            -d QCOM_CDSP_RM -d QCOM_SYSMON_SUBSYSTEM_STATS \
+            -d QCOM_SUBSYSTEM_SLEEP_STATS -d QCOM_SOC_SLEEP_STATS \
+            -d QCOM_ADSP_SLEEPMON -d MSM_TMECOM_QMP -d QCOM_MICRODUMP \
+            -d MSM_CDSP_LOADER -d QTI_PMIC_PON_LOG -d MSM_BOOT_STATS \
+            -d QCOM_RUN_QUEUE_STATS -d USB_BAM -d QCOM_DCVS -d QTI_RIMPS_LOG \
+            -d QCOM_RAMDUMP -d QCOM_PANEL_EVENT_NOTIFIER \
+            -d QCOM_VM_DMESG_DUMPER -d QCOM_FSA4480_I2C \
+            -d SHOW_SUSPEND_EPOCH -d GH_TLMM_VM_MEM_ACCESS -d SPS \
+            -d MSM_PERFORMANCE -d QCOM_VA_MINIDUMP -d MSM_QBT_HANDLER \
+            -d QCOM_HUNG_TASK_ENH
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           KFLAG=""
           [ "$KEEP_GOING" = "true" ] && KFLAG="-k"
