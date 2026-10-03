@@ -164,6 +164,25 @@ jobs:
           for pair in drivers/soc/qcom drivers/clk/qcom drivers/pinctrl/qcom; do
             echo "$pair: $(grep -c '^config ' $pair/Kconfig) total configs"
           done
+          # Same story for the Makefiles: rsync --ignore-existing never copied
+          # the 5.15 Makefiles, so obj-$(CONFIG_...) build rules for BSP modules
+          # (SM_GCC_KALAMA, PINCTRL_KALAMA, ...) were missing and modules with a
+          # surviving =m config were silently not built. Append every 5.15
+          # obj-* line the 6.6 Makefile does not already contain.
+          for pair in drivers/soc/qcom drivers/clk/qcom drivers/pinctrl/qcom \
+                      drivers/interconnect/qcom drivers/iommu drivers/remoteproc \
+                      drivers/phy/qualcomm drivers/usb drivers/edac ; do
+            v15m="../vermeer/$pair/Makefile"
+            g66m="$pair/Makefile"
+            [ -f "$v15m" ] && [ -f "$g66m" ] || continue
+            added=0
+            while IFS= read -r line; do
+              case "$line" in
+                obj-*) grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
+              esac
+            done < "$v15m"
+            echo "  $pair/Makefile: +$added obj lines"
+          done
 
       - name: Generate .config (gki_defconfig + vermeer fragment)
         run: |
