@@ -202,8 +202,13 @@ jobs:
           else
             make O=out ARCH=arm64 LLVM=1 "$GKI_DEFCONFIG" < /dev/null
             # Qualcomm-style fragment merge: gki_defconfig + vermeer_GKI.config.
-            # Options with no source in the GKI 6.6 tree drop out at olddefconfig.
-            ./scripts/kconfig/merge_config.sh -m out/.config arch/arm64/configs/vendor/vermeer_GKI.config || true
+            # merge_config.sh always writes its result to <srcdir>/.config even
+            # when told about out/, so merge in the source root and move the
+            # result into out/ (the 6.6 Makefile rejects an O= build when the
+            # source tree carries a stale .config). Options with no source in
+            # the GKI 6.6 tree drop out at olddefconfig.
+            ./scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/vendor/vermeer_GKI.config || true
+            mv .config out/.config
             make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           fi
           echo "=== config sanity ==="
