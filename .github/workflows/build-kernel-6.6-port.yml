@@ -1,0 +1,188 @@
+name: Port vermeer vendor drivers to linux-6.6 (stage)
+
+on:
+  workflow_dispatch:
+    inputs:
+      lto:
+        description: 'LTO mode'
+        required: false
+        default: 'none'
+        type: choice
+        options: [ none, thin, full ]
+      keep_going:
+        description: 'make -k (collect as many errors as possible)'
+        required: false
+        default: true
+        type: boolean
+  push:
+    branches: [ linux-6.6-port ]
+
+concurrency:
+  group: port-66-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  G66_REPO: https://android.googlesource.com/kernel/common.git
+  G66_BRANCH: android15-6.6
+  V15_REPO: https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
+  V15_BRANCH: bsp-vermeer-t-oss
+  VERMEER_FRAGMENT_URL: https://raw.githubusercontent.com/MiCode/Xiaomi_Kernel_OpenSource/53ef33eacdc4f7ac737451e4cfc91963d59e3956/arch/arm64/configs/vendor/vermeer_GKI.config
+
+jobs:
+  port:
+    name: Copy vermeer 5.15 drivers onto GKI 6.6 and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout port scripts
+        uses: actions/checkout@v4
+
+      - name: Maximize runner disk space
+        run: |
+          set -e
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          set -e
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex cpio zip unzip curl wget git rsync \
+            libssl-dev libelf-dev libncurses-dev \
+            zstd lz4 lzop u-boot-tools kmod dwarves \
+            python3 python-is-python3 clang lld llvm
+          clang --version | head -n1
+
+      - name: Clone GKI 6.6 + vermeer 5.15 source trees
+        run: |
+          set -e
+          git clone --depth=1 -b "$G66_BRANCH" "$G66_REPO" kernel
+          git clone --depth=1 -b "$V15_BRANCH" "$V15_REPO" vermeer
+          echo "=== GKI 6.6 ==="; git -C kernel log -1 --format='%H %s'
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) *=' kernel/Makefile
+          echo "=== vermeer 5.15 ==="; git -C vermeer log -1 --format='%H %s'
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) *=' vermeer/Makefile
+
+      - name: Copy vermeer vendor driver stack onto GKI 6.6
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE"
+          # BSP-only extras are merged with --ignore-existing so upstream 6.6
+          # drivers are never clobbered; full-stack dirs (display/camera/wlan)
+          # replace their 6.6 counterparts wholesale.
+          rsync -a vermeer/drivers/gpu/drm/msm/ kernel/drivers/gpu/drm/msm/
+          mkdir -p kernel/drivers/media/platform/msm
+          rsync -a vermeer/drivers/media/platform/msm/ kernel/drivers/media/platform/msm/
+          rsync -a --ignore-existing vermeer/drivers/soc/qcom/ kernel/drivers/soc/qcom/
+          rsync -a --ignore-existing vermeer/drivers/clk/qcom/ kernel/drivers/clk/qcom/
+          rsync -a --ignore-existing vermeer/drivers/pinctrl/qcom/ kernel/drivers/pinctrl/qcom/
+          rsync -a --ignore-existing vermeer/drivers/interconnect/qcom/ kernel/drivers/interconnect/qcom/
+          rsync -a --ignore-existing vermeer/drivers/iommu/ kernel/drivers/iommu/
+          rsync -a --ignore-existing vermeer/drivers/remoteproc/ kernel/drivers/remoteproc/
+          rsync -a --ignore-existing vermeer/drivers/phy/qualcomm/ kernel/drivers/phy/qualcomm/
+          rsync -a --ignore-existing vermeer/drivers/usb/ kernel/drivers/usb/
+          rsync -a --ignore-existing vermeer/drivers/net/wireless/vendor/ kernel/drivers/net/wireless/vendor/ 2>/dev/null || true
+          for d in drivers/staging/qcacld-3.0 drivers/staging/fw-api; do
+            [ -d "vermeer/$d" ] && rsync -a "vermeer/$d/" "kernel/$d/"
+          done
+          echo "=== copied tree stats ==="
+          du -sh kernel/drivers/gpu/drm/msm kernel/drivers/media/platform/msm kernel/drivers/soc/qcom 2>/dev/null
+          find kernel -name '*.ko' -o -name 'modules.order' | head -n1 >/dev/null || true
+
+      - name: Wire vendor Kconfig/Makefile hooks into the 6.6 tree
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE/kernel"
+          # display: 6.6 drm/Kconfig already sources msm/Kconfig (upstream), and
+          # drm/Makefile already descends into msm/. Verify; add if missing.
+          grep -q 'source "drivers/gpu/drm/msm/Kconfig"' drivers/gpu/drm/Kconfig || echo 'source "drivers/gpu/drm/msm/Kconfig"' >> drivers/gpu/drm/Kconfig
+          # camera/media: hook msm/ into the platform Kconfig/Makefile
+          grep -q 'source "drivers/media/platform/msm/Kconfig"' drivers/media/platform/Kconfig || echo 'source "drivers/media/platform/msm/Kconfig"' >> drivers/media/platform/Kconfig
+          grep -q 'obj-y += msm/' drivers/media/platform/Makefile || printf 'obj-y += msm/\n' >> drivers/media/platform/Makefile
+          # qcacld: vermeer's drivers/staging/Kconfig/Makefile lines
+          for f in Kconfig Makefile; do
+            if [ -f "../vermeer/drivers/staging/$f" ]; then
+              grep -E 'qcacld|fw-api' "../vermeer/drivers/staging/$f" | while IFS= read -r line; do
+                grep -qF "$line" "drivers/staging/$f" || printf '%s\n' "$line" >> "drivers/staging/$f"
+              done
+            fi
+          done
+          echo "=== wired hooks ==="
+          grep -n 'msm' drivers/media/platform/Kconfig drivers/media/platform/Makefile || true
+          grep -n 'qcacld' drivers/staging/Kconfig drivers/staging/Makefile || true
+
+      - name: Generate .config (gki_defconfig + vermeer fragment)
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE/kernel"
+          curl -fsSL --retry 3 -o arch/arm64/configs/vendor/vermeer_GKI.config "$VERMEER_FRAGMENT_URL" 2>/dev/null || {
+            mkdir -p arch/arm64/configs/vendor
+            curl -fsSL --retry 3 -o arch/arm64/configs/vendor/vermeer_GKI.config "$VERMEER_FRAGMENT_URL"
+          }
+          make O=out ARCH=arm64 LLVM=1 gki_defconfig < /dev/null
+          ./scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/vendor/vermeer_GKI.config || true
+          mv .config out/.config
+          make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
+          echo "=== config entries ==="
+          grep -c '^CONFIG' out/.config || true
+          echo "=== driver options of interest ==="
+          grep -E 'CONFIG_DRM_MSM|CONFIG_QCOM_|CONFIG_QCACLD|CONFIG_MSM_|CONFIG_QCOM_CAMSS|CONFIG_INTERCONNECT_QCOM' out/.config | head -n 30 || true
+
+      - name: Build (collect errors, -k)
+        env:
+          LTO_MODE: ${{ inputs.lto || 'none' }}
+          KEEP_GOING: ${{ inputs.keep_going && 'true' || 'false' }}
+        run: |
+          set -o pipefail
+          cd "$GITHUB_WORKSPACE/kernel"
+          case "$LTO_MODE" in
+            thin) ./scripts/config --file out/.config -e LTO_CLANG_THIN ;;
+            full) ./scripts/config --file out/.config -e LTO_CLANG_FULL ;;
+            *) ./scripts/config --file out/.config -e LTO_NONE ;;
+          esac
+          ./scripts/config --file out/.config -d WERROR -d LTO_CLANG_FULL -d LTO_CLANG_THIN
+          make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
+          KFLAG=""
+          [ "$KEEP_GOING" = "true" ] && KFLAG="-k"
+          find . -not -path './out*' -exec touch -d @0 {} + 2>/dev/null || true
+          make $KFLAG -j"$(nproc)" O=out ARCH=arm64 LLVM=1 \
+               KCFLAGS='-Wno-error=implicit-int -Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -Wno-error=int-conversion' \
+               Image modules < /dev/null 2>&1 | tee -a build.log || build_failed=1
+          echo "=== build output ==="
+          ls -lh out/arch/arm64/boot/Image 2>/dev/null || echo "NO IMAGE"
+          find out -name '*.ko' 2>/dev/null | wc -l
+          if [ "${build_failed:-0}" = "1" ]; then
+            echo "BUILD FAILED - collecting error digest"
+            grep -E 'error:|Error [0-9]' build.log | sort | uniq -c | sort -rn | head -n 60 > errors-digest.txt || true
+            cat errors-digest.txt || true
+            echo "=== first 40 error contexts ==="
+            grep -n -m 40 -E 'error:|Error [0-9]' build.log || true
+            exit 1
+          fi
+
+      - name: Save build tree cache (resume across iterations)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: kernel/out
+          key: port-66-out-${{ github.run_id }}
+
+      - name: Restore build tree cache
+        uses: actions/cache/restore@v4
+        with:
+          path: kernel/out
+          key: port-66-out-${{ github.run_id }}
+          restore-keys: port-66-out-
+
+      - name: Upload diagnostics (always, even on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: port-diag-${{ github.run_id }}
+          path: |
+            kernel/build.log
+            kernel/errors-digest.txt
+            kernel/out/.config
+          if-no-files-found: warn
