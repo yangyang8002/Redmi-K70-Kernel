@@ -124,6 +124,31 @@ jobs:
           grep -q 'config ARCH_KALAMA' arch/arm64/Kconfig.platforms || \
           printf 'config ARCH_KALAMA\n  bool\nconfig ARCH_CROW\n  bool\nconfig ARCH_KAKA\n  bool\n' >> arch/arm64/Kconfig.platforms
           tail -n 12 arch/arm64/Kconfig.platforms
+          # rsync --ignore-existing never copied the 5.15 BSP Kconfig files
+          # (6.6 already has same-named ones), so every BSP module symbol was
+          # undefined at olddefconfig and no .ko was built. Merge each 5.15
+          # BSP Kconfig into its 6.6 counterpart: append only config blocks
+          # whose symbol is not already defined, and drop 'source' lines
+          # pointing at BSP files that do not exist in the 6.6 tree.
+          for pair in drivers/soc/qcom drivers/clk/qcom drivers/pinctrl/qcom \
+                      drivers/interconnect/qcom drivers/iommu drivers/remoteproc \
+                      drivers/phy/qualcomm drivers/usb drivers/edac ; do
+            v15="../vermeer/$pair/Kconfig"
+            g66="$pair/Kconfig"
+            [ -f "$v15" ] && [ -f "$g66" ] || continue
+            grep -E '^(config|menuconfig) ' "$g66" | awk '{print $2}' | sort -u > /tmp/defined.txt
+            awk -v DEFF=/tmp/defined.txt '
+              BEGIN { while ((getline l < DEFF) > 0) def[l]=1 }
+              /^(config|menuconfig) / { name=$2; blk=$0; inblk=1; keep=((name in def)?0:1); if (keep) print blk; next }
+              inblk && /^[ \t]/ { if (keep) print; next }
+              inblk && /^$/ { inblk=0; keep=0; print ""; next }
+              { inblk=0; keep=0 }
+            ' "$v15" | grep -v '^source ' >> "$g66" || true
+          done
+          echo "=== merged BSP Kconfig additions ==="
+          for pair in drivers/soc/qcom drivers/clk/qcom drivers/pinctrl/qcom; do
+            echo "$pair: $(grep -c '^config ' $pair/Kconfig) total configs"
+          done
 
       - name: Generate .config (gki_defconfig + vermeer fragment)
         run: |
