@@ -156,6 +156,11 @@ jobs:
           # android_debug_symbol(ADS_LINUX_BANNER) framework, which 6.6 does
           # not have; substitute the kernel's standard version string.
           sed -i 's|linux_banner = android_debug_symbol(ADS_LINUX_BANNER);|linux_banner = "Linux";|' drivers/soc/qcom/msm_minidump.c
+          # 6.6 FORTIFY statically flags the 5.15 banner/strtable writes in
+          # msm_minidump.c; that is port noise, not a real bug - disable
+          # fortify for just this object.
+          grep -q CFLAGS_msm_minidump drivers/soc/qcom/Makefile || \
+            echo 'CFLAGS_msm_minidump.o := -D__NO_FORTIFY' >> drivers/soc/qcom/Makefile
           # 6.9 made ww_mutex_trylock() take a ww_acquire_ctx too; the 5.15
           # callers pass only the lock. Add NULL for single-arg calls.
           grep -rl 'ww_mutex_trylock(' drivers/ 2>/dev/null | while read -r f; do
