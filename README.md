@@ -2,6 +2,23 @@
 
 [![Build Redmi K70 Kernel](https://github.com/yangyang8002/redmi-k70-kernel/actions/workflows/build-kernel.yml/badge.svg)](https://github.com/yangyang8002/redmi-k70-kernel/actions/workflows/build-kernel.yml)
 
+> ## ⚠️ 实验性 linux-6.6 分支（`linux-6.6`）
+>
+> **[<img src="https://github.com/yangyang8002/redmi-k70-kernel/actions/workflows/build-kernel-6.6.yml/badge.svg?branch=linux-6.6" alt="Build 6.6" height="20">](https://github.com/yangyang8002/redmi-k70-kernel/actions/workflows/build-kernel-6.6.yml)**（[工作流](.github/workflows/build-kernel-6.6.yml)）
+>
+> ### ⛔ 不可用于日用 / 不要刷入真机
+>
+> 此分支将内核从 5.15 迁移到 **Linux 6.6**，但这是一个**纯实验性构建**：
+>
+> - **基线**：AOSP GKI [`android15-6.6`](https://android.googlesource.com/kernel/common/+/refs/heads/android15-6.6) 分支（当前 **6.6.143**，GKI 2.0 / Android 15 基线）+ 小米 MiCode 5.15 树的 [`vermeer_GKI.config`](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/bsp-vermeer-t-oss/arch/arm64/configs/vendor/vermeer_GKI.config) 配置片段合并（高通官方 fragment 流程）。
+> - **为什么无法日用**：vermeer 的设备驱动（显示 / 相机 / 基带 / 传感器 / 触控等）只存在于 5.15 vendor 树；6.6 GKI 树中**没有这些驱动**（配置项在 `olddefconfig` 时被丢弃）。同时原厂 vendor_boot / vendor_dlkm 里的模块是按 **android13-5.15 KMI** 编译的，与 6.6 内核 vermagic 不兼容。刷入后**无法启动或硬件全部失效**。
+> - **Root 方案**：与 `sukisu-susfs` 分支相同 —— SukiSU-Ultra（`builtin` 分支）+ SUSFS（[`gki-android15-6.6`](https://gitlab.com/simonpunk/susfs4ksu/-/tree/gki-android15-6.6) 补丁，0 rejects），全部 `CONFIG_KSU_SUSFS_*` 选项开启。
+> - **vermagic**：`6.6.143-android15-6.6`（对齐官方 GKI release 格式；禁用 `LOCALVERSION_AUTO` 去掉 `-g<sha>` 后缀）。
+> - **vendor_boot**：实验性打包 —— GKI 6.6 树自产的模块（flat 布局）；GKI 树没有 vermeer 的 vendor 模块清单（`gki_system_dlkm_modules` / `modules.list.msm.vermeer` 是 5.15 树文件）。
+> - **结论**：满足"尝试迁移到 6.6"的构建可行性验证 —— 6.6 GKI 基线 + vermeer 配置可完整编译出 Image / 模块 / boot.img / vendor_boot.img；但要做出**可日用的 6.6**，需要小米官方放出 6.6 vendor 源码（OSS 分支），或整个 vendor 驱动栈的社区移植（数月工作量）。
+>
+> 调研结论（2026-10）：MiCode 无任何 6.6 分支（266 个分支全查）；LineageOS / Everest / 一加等同 SoC（SM8550）社区树全部停留在 5.15 —— **不存在现成的 vermeer 6.6 基线**。
+
 本仓库使用 GitHub Actions 从**小米官方开源内核仓库**编译红米 K70 的官方内核源码。
 
 - 设备：小米 红米 K70（代号 `vermeer`，骁龙 8 Gen 2 / SM8550；海外对应 POCO F6 Pro）

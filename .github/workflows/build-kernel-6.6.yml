@@ -92,7 +92,7 @@ jobs:
           # ---- SUSFS kernel patches for GKI android15-6.6 ----
           cd "$GITHUB_WORKSPACE"
           git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
-          (cd susfs4ksu && git log -1 --format='susfs4ksu %SUSFS_BRANCH%: %h') > susfs_version.txt
+          (cd susfs4ksu && git log -1 --format="susfs4ksu ${SUSFS_BRANCH}: %h") > susfs_version.txt
           cd kernel
           cp "../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch" .
           cp ../susfs4ksu/kernel_patches/fs/susfs.c fs/
@@ -269,6 +269,11 @@ jobs:
             -e KSU_SUSFS_OPEN_REDIRECT \
             -e KSU_SUSFS_ENABLE_LOG \
             -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          # Match the official GKI release string (6.6.xxx-android15-6.6):
+          # disable LOCALVERSION_AUTO (drops the appended -g<sha>) and set the
+          # official branch suffix instead of the tree default "-4k".
+          ./scripts/config --file out/.config -d LOCALVERSION_AUTO
+          ./scripts/config --file out/.config --set-str LOCALVERSION "-android15-6.6"
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           make O=out ARCH=arm64 LLVM=1 syncconfig < /dev/null
           echo "=== SukiSU-Ultra + SUSFS config ==="
@@ -425,6 +430,11 @@ jobs:
             echo "compiler        : $(clang --version | head -n1)"
             echo "targets         : $BUILD_TARGETS"
           } > "$A/BUILD-INFO.txt"
+          # modules_install leaves 'build' and 'source' symlinks in
+          # lib/modules/<KVER>/ pointing at the build tree; upload-artifact
+          # dereferences symlinks, which would balloon the artifact by ~1.4 GB
+          # of build intermediates. Drop them before packaging/upload.
+          rm -rf "$A"/modules/lib/modules/*/build "$A"/modules/lib/modules/*/source
           tar -czf "$A/modules.tar.gz" -C "$A/modules" .
 
       - name: Upload kernel artifacts
