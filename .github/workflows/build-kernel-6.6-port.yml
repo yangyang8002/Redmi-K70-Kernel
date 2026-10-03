@@ -89,7 +89,9 @@ jobs:
           done
           # 5.15 dt-bindings/uapi headers (qcom,ipcc.h etc.) are referenced by
           # the BSP drivers; merge them without clobbering 6.6 headers.
-          rsync -a --ignore-existing vermeer/include/ kernel/include/
+          # asm-generic is excluded: 5.15's asm-generic/termios.h conflicts
+          # with 6.6's include/linux/termios_internal.h declarations.
+          rsync -a --ignore-existing --exclude='asm-generic/' vermeer/include/ kernel/include/
           test -f kernel/include/dt-bindings/soc/qcom,ipcc.h && echo "qcom,ipcc.h merged"
           echo "=== copied tree stats ==="
           du -sh kernel/drivers/gpu/drm/msm kernel/drivers/media/platform/msm kernel/drivers/soc/qcom 2>/dev/null
