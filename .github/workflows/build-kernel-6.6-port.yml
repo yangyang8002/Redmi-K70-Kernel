@@ -112,6 +112,11 @@ jobs:
           echo "=== wired hooks ==="
           grep -n 'msm' drivers/media/platform/Kconfig drivers/media/platform/Makefile || true
           grep -n 'qcacld' drivers/staging/Kconfig drivers/staging/Makefile || true
+          # Linux 6.6 removed module_refcount(); AOSP's gunyah vm_mgr.c still
+          # references it but never rots because GKI keeps GUNYAH=n. The vermeer
+          # fragment enables GUNYAH, so drop the stale refcount check.
+          sed -i 's/WARN_ON(fn->mod \&\& module_refcount(fn->mod));/WARN_ON(0);/' drivers/virt/gunyah/vm_mgr.c
+          grep -n 'WARN_ON(0)' drivers/virt/gunyah/vm_mgr.c
 
       - name: Generate .config (gki_defconfig + vermeer fragment)
         run: |
@@ -137,12 +142,12 @@ jobs:
         run: |
           set -o pipefail
           cd "$GITHUB_WORKSPACE/kernel"
+          ./scripts/config --file out/.config -d WERROR
           case "$LTO_MODE" in
-            thin) ./scripts/config --file out/.config -e LTO_CLANG_THIN ;;
-            full) ./scripts/config --file out/.config -e LTO_CLANG_FULL ;;
-            *) ./scripts/config --file out/.config -e LTO_NONE ;;
+            thin) ./scripts/config --file out/.config -d LTO_NONE -e LTO_CLANG_THIN ;;
+            full) ./scripts/config --file out/.config -d LTO_NONE -e LTO_CLANG_FULL ;;
+            *) ./scripts/config --file out/.config -d LTO_CLANG_FULL -d LTO_CLANG_THIN -e LTO_NONE ;;
           esac
-          ./scripts/config --file out/.config -d WERROR -d LTO_CLANG_FULL -d LTO_CLANG_THIN
           # GKI disables CONFIG_MODULE_UNLOAD, but the vermeer driver stack
           # (gunyah vm_mgr.c) references module_refcount() which only exists
           # when unloading is compiled in. Enable it.
@@ -166,14 +171,7 @@ jobs:
             exit 1
           fi
 
-      - name: Save build tree cache (resume across iterations)
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: kernel/out
-          key: port-66-out-${{ github.run_id }}
-
-      - name: Restore build tree cache
+      - name: Restore build tree cache (resume across iterations)
         uses: actions/cache/restore@v4
         with:
           path: kernel/out
