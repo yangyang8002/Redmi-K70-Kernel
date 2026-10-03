@@ -89,6 +89,7 @@ GitHub 免费单任务上限 6 小时，完整 `Image + modules` 构建在 4 核
 - **SukiSU-Ultra**：用官方 `setup.sh` 接入 `builtin` 分支（该分支内核侧已内置 SUSFS 改造——静态 hook、无 kprobe 依赖、自带完整 `KSU_SUSFS` Kconfig 菜单，无需再打 `10_enable_susfs_for_ksu.patch`）；
 - **SUSFS 内核补丁**：官方源 [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) `gki-android13-5.15` 分支——新增 `fs/susfs.c`、`include/linux/susfs.h`、`susfs_def.h`，并用 `50_add_susfs_in_gki-android13-5.15.patch` 把 hook 嵌入 `fs/`、`kernel/`、`mm/`、`security/selinux/` 等文件（`--forward --fuzz=3` 容错应用，`.rej` 数量写入 BUILD-INFO）；
 - **配置**：`CONFIG_KSU=y` + 全部 SUSFS 选项（`SUS_PATH`/`SUS_MOUNT`/`SUS_KSTAT`/`SUS_MAP`/`SPOOF_UNAME`/`SPOOF_CMDLINE_OR_BOOTCONFIG`/`OPEN_REDIRECT`/`ENABLE_LOG`/`HIDE_KSU_SUSFS_SYMBOLS`）；
+- **兼容层（shims）**：vermeer 树缺 AOSP 的 `VMA_PAD_START` 回移（以 `vma->vm_end` 等价垫片）；SukiSU 的 sucompat 无 post-exec 钩子（补 no-op 垫片）——两处垫片均在集成步骤自动注入，50 号补丁 0 拒绝（`.rej` 计数写入 BUILD-INFO）；
 - **vermagic**：所有移植修改会被提交掉，release 仍为干净的 `5.15.78`，与官方产物一致；
 - 产物结构与 `main` 分支完全一致（`boot.img` / `vendor_boot.img` / 模块包等），ThinLTO 默认开启。
 
