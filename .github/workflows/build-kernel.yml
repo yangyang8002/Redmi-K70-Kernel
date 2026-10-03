@@ -191,15 +191,15 @@ jobs:
           if ! grep -q '^int ksu_handle_post_execveat_sucompat' fs/exec.c; then
             cat >> fs/exec.c <<'SHIM'
 
-#ifdef CONFIG_KSU_SUSFS
-/* Compatibility shim for SukiSU-Ultra: no post-exec work is needed. */
-int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
-                                      void *envp, int *flags, int *retval)
-{
-    return 0;
-}
-#endif
-SHIM
+          #ifdef CONFIG_KSU_SUSFS
+          /* Compatibility shim for SukiSU-Ultra: no post-exec work is needed. */
+          int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
+                                                void *envp, int *flags, int *retval)
+          {
+              return 0;
+          }
+          #endif
+          SHIM
           fi
           tail -n 12 fs/exec.c
           echo "=== .rej files (should be empty) ==="
