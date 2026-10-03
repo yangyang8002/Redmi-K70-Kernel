@@ -161,6 +161,12 @@ jobs:
           # fortify for just this object.
           grep -q CFLAGS_msm_minidump drivers/soc/qcom/Makefile || \
             echo 'CFLAGS_msm_minidump.o := -D__NO_FORTIFY' >> drivers/soc/qcom/Makefile
+          # minidump_log.c (part of the minidump-y object set) needs 5.15-only
+          # structures (cfs_rq.last, module.core_layout, android_debug_symbol,
+          # old vendor-hook signature); drop the debug-log exporter from the
+          # set, keep the minidump core.
+          sed -i 's/minidump-y[[:space:]]*+= msm_minidump.o minidump_log.o/minidump-y   += msm_minidump.o/' drivers/soc/qcom/Makefile
+          grep 'minidump-y' drivers/soc/qcom/Makefile || true
           # 6.9 made ww_mutex_trylock() take a ww_acquire_ctx too; the 5.15
           # callers pass only the lock. Add NULL for single-arg calls.
           grep -rl 'ww_mutex_trylock(' drivers/ 2>/dev/null | while read -r f; do
