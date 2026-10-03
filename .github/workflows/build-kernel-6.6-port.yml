@@ -254,6 +254,11 @@ jobs:
                 # minidump module object set: 5.15 collects minidump pieces
                 # via minidump-$(CONFIG_QCOM_MINIDUMP_PANIC_DUMP) variables.
                 minidump-*) grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
+                # composite-module object set definitions (e.g. qcom_logbuf_vh-y
+                # := qcom_logbuf_vendor_hooks.o): without them the obj- target
+                # has no build rule at all and make dies with "No rule".
+                *-y[[:space:]]*:=*|*-y[[:space:]]*+=*)
+                  grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
               esac
             done < "$v15m"
             echo "  $pair/Makefile: +$added obj lines"
