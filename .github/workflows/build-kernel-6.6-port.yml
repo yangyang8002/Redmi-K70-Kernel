@@ -123,6 +123,15 @@ jobs:
           # fragment enables GUNYAH, so drop the stale refcount check.
           sed -i 's/WARN_ON(fn->mod \&\& module_refcount(fn->mod));/WARN_ON(0);/' drivers/virt/gunyah/vm_mgr.c
           grep -n 'WARN_ON(0)' drivers/virt/gunyah/vm_mgr.c
+          # 6.4+ removed the owner arg from class_create(): fix every copied
+          # 5.15 driver that still calls class_create(THIS_MODULE, "name").
+          n=0
+          grep -rl 'class_create(THIS_MODULE' drivers/ arch/ 2>/dev/null | while read -r f; do
+            sed -i 's/class_create(THIS_MODULE, /class_create(/g' "$f"
+            echo "  fixed: $f"
+            n=$((n+1))
+          done
+          echo "class_create fixes applied"
           # The 5.15 SoC platform symbols (ARCH_KALAMA/CROW/KAKA) do not exist
           # in the 6.6 tree, so every vendor-driver Kconfig that depends on
           # them was silently dropped at olddefconfig and no .ko was built.
