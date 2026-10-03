@@ -119,6 +119,39 @@ jobs:
           done < <(find . -name 'Kconfig*' -type f -not -path './scripts/kconfig/tests/*' -print0)
           echo "dangling Kconfig sources removed: $removed"
 
+      - name: Stub the stripped drivers/misc/hwid/hwid.h header
+        run: |
+          set -e
+          cd kernel
+          # Xiaomi's OSS release strips drivers/misc/hwid/ entirely, but
+          # drivers/usb/repeater/repeater-qti-pmic-eusb2.c still includes its
+          # header and calls get_hw_version_platform()/get_hw_country_version().
+          # Stub them to return values that match no real project/country, so
+          # the eUSB2 repeater driver takes the standard qcom,param-override-seq
+          # tuning path from DT (ms scheme disabled).
+          mkdir -p drivers/misc/hwid
+          cat > drivers/misc/hwid/hwid.h <<'EOF'
+          /* Stub for the stripped drivers/misc/hwid/ (Xiaomi OSS tree quirk). */
+          #ifndef _HWID_STUB_H
+          #define _HWID_STUB_H
+
+          enum country_version_stub {
+              CountryCN = 100,
+          };
+
+          enum hardware_project_stub {
+              HARDWARE_PROJECT_M2 = 101,
+              HARDWARE_PROJECT_M3 = 102,
+              HARDWARE_PROJECT_N11 = 103,
+          };
+
+          static inline int get_hw_version_platform(void) { return -1; }
+          static inline int get_hw_country_version(void) { return -1; }
+
+          #endif /* _HWID_STUB_H */
+          EOF
+          echo "created stub drivers/misc/hwid/hwid.h"
+
       - name: Set up AOSP prebuilt clang (official toolchain pinned by the kernel tree)
         env:
           TOOLCHAIN_MODE: ${{ inputs.toolchain || 'auto' }}
@@ -318,6 +351,7 @@ jobs:
             echo "toolchain       : $USING_TOOLCHAIN"
             echo "lto mode        : $LTO_MODE"
             echo "werror          : disabled + KCFLAGS -Wno-error=implicit-int (newer clang compatibility)"
+            echo "hwid.h          : stubbed (drivers/misc/hwid/ stripped from OSS tree)"
             echo "compiler        : $(clang --version | head -n1)"
             echo "config          : $GKI_FRAGMENT + $VERMEER_FRAGMENT -> $MERGED_DEFCONFIG"
             echo "targets         : $BUILD_TARGETS (official: Image modules per build.config.aarch64)"
