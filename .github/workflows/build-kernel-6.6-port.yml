@@ -121,14 +121,8 @@ jobs:
           # in the 6.6 tree, so every vendor-driver Kconfig that depends on
           # them was silently dropped at olddefconfig and no .ko was built.
           # Define them so the merged vermeer fragment entries survive.
-          grep -q 'config ARCH_KALAMA' arch/arm64/Kconfig.platforms || cat >> arch/arm64/Kconfig.platforms <<'EOF'
-config ARCH_KALAMA
-	bool
-config ARCH_CROW
-	bool
-config ARCH_KAKA
-	bool
-EOF
+          grep -q 'config ARCH_KALAMA' arch/arm64/Kconfig.platforms || \
+          printf 'config ARCH_KALAMA\n  bool\nconfig ARCH_CROW\n  bool\nconfig ARCH_KAKA\n  bool\n' >> arch/arm64/Kconfig.platforms
           tail -n 12 arch/arm64/Kconfig.platforms
 
       - name: Generate .config (gki_defconfig + vermeer fragment)
