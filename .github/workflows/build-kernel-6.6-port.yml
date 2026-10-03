@@ -262,8 +262,7 @@ jobs:
           done
           echo "=== packaged .ko files: $(find "$A" -name '*.ko' | wc -l) ==="
           if curl -fsSL --retry 3 -o /tmp/vermeer-ml "$VERMEER_MODULE_LIST_URL" 2>/dev/null; then
-            find out -name '*.ko' -printf '%f
-' | sort -u > /tmp/built
+            find out -name '*.ko' -printf '%f\n' | sort -u > /tmp/built
             grep -v '^#' /tmp/vermeer-ml | grep -v '^$' | sed 's/\.ko$//' | sort > /tmp/want
             echo "=== official vermeer module list: $(wc -l < /tmp/want) entries; built unique modules: $(wc -l < /tmp/built) ==="
             sed 's/\.ko$//' /tmp/built | sort > /tmp/builtbase
