@@ -132,6 +132,12 @@ jobs:
             n=$((n+1))
           done
           echo "class_create fixes applied"
+          # The 5.15 BSP hwkm.h includes userspace <stdbool.h>; the kernel's
+          # bool already comes from linux/types.h. Drop such includes.
+          grep -rl '#include <stdbool.h>' include/ drivers/ 2>/dev/null | while read -r f; do
+            sed -i '/#include <stdbool.h>/d' "$f"
+            echo "  dropped stdbool.h from: $f"
+          done
           # ... and the same call split across two lines (dcc_v2.c style):
           # class_create(THIS_MODULE,\n "name") - the single-line sed above
           # missed it, so strip the owner arg at end-of-line too.
