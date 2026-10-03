@@ -343,6 +343,11 @@ jobs:
             -d QTI_CHARGER_ULOG_GLINK -d QTI_ALTMODE_GLINK
           # ... and the spmi glink debug client - same story.
           ./scripts/config --file out/.config -d SPMI_QTI_GLINK_DEBUG
+          # minidump_memory.c (the panic-dump collector of the minidump set)
+          # needs 5.15-private MM internals (struct track.addrs, dma_resv
+          # seq/fence, slab internals, ADS_* symbols, PAGE_OWNER); it is a
+          # panic-time debug feature - drop it from the minidump set.
+          ./scripts/config --file out/.config -d QCOM_MINIDUMP_PANIC_DUMP
           # The 5.15 mem-hooks/mem-offline drivers depend on Qualcomm's
           # private 5.15 MM internals (mkswapd array, MAX_KSWAPD_THREADS)
           # that do not exist in 6.6 MM: skip them.
