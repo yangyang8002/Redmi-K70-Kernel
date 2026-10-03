@@ -292,6 +292,8 @@ jobs:
           # are not in the official vermeer module list - skip them too.
           ./scripts/config --file out/.config \
             -d QTI_CHARGER_ULOG_GLINK -d QTI_ALTMODE_GLINK
+          # ... and the spmi glink debug client - same story.
+          ./scripts/config --file out/.config -d SPMI_QTI_GLINK_DEBUG
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           KFLAG=""
           [ "$KEEP_GOING" = "true" ] && KFLAG="-k"
