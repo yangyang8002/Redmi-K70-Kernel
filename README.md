@@ -33,13 +33,42 @@ GitHub 免费单任务上限 6 小时，完整 `Image + modules` 构建在 4 核
 
 | 文件 | 说明 |
 |---|---|
-| `boot/Image` | 内核镜像（GKI `Image`，未压缩） |
+| `boot.img` | **Boot 镜像**（boot image header v4，官方参数，未签名） |
+| `vendor_boot.img` | **Vendor Boot 镜像**（v4，官方 cmdline + 官方模块清单；见下方打包说明） |
+| `init_boot.img` | **Init Boot 镜像**（提供 `stock/init_boot.img` 时原样附带；见下方说明） |
+| `vendor_ramdisk.cpio.gz` | vendor_boot 的 vendor ramdisk 原始 cpio（供自定义重打包） |
+| `vendor_boot.modules.load` / `vendor_dlkm-modules.tar.gz` | 第一阶段模块清单 / vendor_dlkm 分区模块集（镜像外模块） |
+| `boot/Image` | 内核镜像（GKI `Image`，未压缩，`boot.img` 的 kernel 段同物） |
 | `boot/System.map` | 符号表 |
 | `Module.symvers` | 模块符号版本（编译外部模块需要） |
 | `modules.tar.gz` | 全部内核模块（`modules_install` + depmod） |
 | `kernel.config` / `merged-defconfig` | 实际使用的内核配置 |
 | `BUILD-INFO.txt` | 源码提交、内核版本、工具链等元信息 |
 | `build.log` | 完整构建日志 |
+
+## Boot / Init Boot / Vendor Boot 打包说明
+
+官方打包参数全部取自内核树自带的 `build.config.msm.vermeer` / `build.config.msm.common`：
+
+- `boot.img`：`mkbootimg --header_version 4 --kernel Image --cmdline "" --base 0x80000000 --pagesize 4096`（`BOOT_IMAGE_HEADER_VERSION=4`、`BASE_ADDRESS`、`PAGE_SIZE` 均官方值）。GKI boot v4 的 cmdline 为空，引导参数在 vendor_boot 的 `vendor_cmdline` 里。**未签名**（GKI `boot_signature` 需 Google 认证密钥，无法生成）。
+- `vendor_boot.img`：`vendor_cmdline` 为官方 gki 变体值（`console=ttyMSM0,115200n8 earlycon=qcom_geni,0x00a9C000 qcom_geni_serial.con_enabled=1 nosoftlockup bootconfig`）；vendor ramdisk 按官方规则构造——`android/gki_system_dlkm_modules` + `modules.list.msm.vermeer` 两个官方清单内的模块（过滤掉 OSS 树剥离后无法编译的，如 `hwid.ko`）+ `modules.load` + 官方 blocklist + depmod 元数据；其余模块按官方 `prepare_vendor_dlkm` 逻辑归入 `vendor_dlkm-modules.tar.gz`。
+- `init_boot.img`：其 generic ramdisk 是 **AOSP 用户态**（`/init` 二进制、linker 等），不属于内核源码，内核树无法构建。**直接复用官方 init_boot.img 即可**：本构建通过提交树内修复使 vermagic 与官方完全一致（`5.15.78-g53ef33eacdc4`，无 `-dirty` 后缀），官方 init_boot 里的 GKI 模块在本内核上可直接加载。把官方 `init_boot.img` 放进仓库 `stock/` 目录重新触发构建，它会被原样打进 artifacts。
+
+### 如何补齐 DTB 与官方镜像参数（`stock/` 目录）
+
+内核树不包含设备树（`DTB_DIR=vendor/qcom` 的 DTS 被 OSS 剥离），因此默认打包的 `vendor_boot.img` **不含 DTB**。补齐方法：
+
+1. 用 [payload-dumper-go](https://github.com/ssut/payload-dumper-go) 从红米 K70 官方完整卡刷包（`.zip` 内 `payload.bin`）提取 `boot.img`、`init_boot.img`、`vendor_boot.img`、`vbmeta.img`；
+2. 在本仓库建 `stock/` 目录，放入 `vendor_boot.img`（必需，用于提取真实设备 DTB + bootconfig）和 `init_boot.img`（用于附带），提交推送或手动触发构建；
+3. 构建会自动从 `stock/vendor_boot.img` 解包提取 DTB 与 bootconfig，用官方参数重打 `vendor_boot.img`，并把 `stock/init_boot.img` 原样附进 artifacts。
+
+### 刷机（自行承担风险）
+
+- 前提：Bootloader 已解锁；产物未签名，需关闭 AVB 校验：
+  `fastboot flash vbmeta --disable-verity --disable-verification vbmeta.img`（vbmeta 用官方卡刷包提取的那份）
+- 刷入三件：`fastboot flash boot boot.img` → `fastboot flash vendor_boot vendor_boot.img` →（如提供了 stock）`fastboot flash init_boot init_boot.img`
+- `vendor_dlkm-modules.tar.gz` 中的模块对应真机 `vendor_dlkm` 分区；如需刷入需自行重打包 ext4/EROFS 镜像（超出本仓库范围）。
+- 首次刷自定义内核建议先 `fastboot boot boot.img` 临时引导测试（无 dtb 的 vendor_boot 在真机上无法引导时，必须先补齐 `stock/vendor_boot.img`）。
 
 ## 使用
 
@@ -48,8 +77,9 @@ GitHub 免费单任务上限 6 小时，完整 `Image + modules` 构建在 4 核
 
 ## 说明与注意
 
-- 红米 K70 的**设备树（DTB）不在开源内核树中**（高通将其放在单独的 devicetree 组件中，未随内核开源），因此产物不含 DTB。
-- 本仓库用于官方源码的**编译验证与开发研究**：产物的签名密钥、配置与小米官方发布的二进制不同，**不能直接替换刷机**；如需刷入，模块必须与本内核配套，并自行重打包 `vendor_boot` 等镜像。
+- 红米 K70 的**设备树（DTB）不在开源内核树中**（`DTB_DIR=vendor/qcom` 的 DTS 被 OSS 剥离）；默认 `vendor_boot.img` 不含 DTB，按上方 `stock/` 目录方法补齐后即为完整可引导配置。
+- 产物的签名密钥与小米官方发布的不同（**未签名**，无 GKI boot_signature），官方线刷/卡刷包校验不会通过；解锁 Bootloader 并关闭 AVB 校验后可 `fastboot` 刷入（见上方刷机节）。模块已与本内核配套重打包进 `vendor_boot.img`。
+- `vendor_boot.img` 内不含 `hwid.ko`、`mi_power.ko` 等小米闭源模块（OSS 树剥离了其源码，无法编译）；官方清单内其余模块齐全。
 - 编译 K70 系列 other 型号需改 workflow 中的分支与配置片段：`bsp-manet-u-oss`（K70 Pro，manet）/ `bsp-duchamp-u-oss`（K70E，duchamp）。
 
 ## 参考
