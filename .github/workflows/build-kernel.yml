@@ -32,7 +32,7 @@ on:
         default: 'Image modules'
         type: string
   push:
-    branches: [ main ]
+    branches: [ main, sukisu-susfs ]
 
 concurrency:
   group: build-redmi-k70-kernel-${{ github.ref }}
@@ -152,6 +152,38 @@ jobs:
           EOF
           echo "created stub drivers/misc/hwid/hwid.h"
 
+      - name: Integrate SukiSU-Ultra (builtin/SUSFS branch) + SUSFS patches
+        run: |
+          set -eo pipefail
+          # ---- SukiSU-Ultra kernel integration ----
+          # The "builtin" branch ships the SUSFS-ready kernel side: static hooks
+          # (no kprobe dependency) and the full KSU_SUSFS Kconfig menu built in,
+          # so susfs4ksu's 10_enable_susfs_for_ksu.patch is already applied there.
+          cd kernel
+          curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+          (cd KernelSU && git log -1 --format='SukiSU-Ultra builtin: %h %s') | tee ../ksu_version.txt
+          # ---- SUSFS kernel patches for GKI android13-5.15 ----
+          # Official source: simonpunk/susfs4ksu, branch gki-android13-5.15.
+          # fs/susfs.c + include/linux/susfs.h + susfs_def.h are NEW files;
+          # the 50_add_susfs patch hooks them into existing fs/kernel/selinux files.
+          cd "$GITHUB_WORKSPACE"
+          git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
+          (cd susfs4ksu && git log -1 --format='susfs4ksu gki-android13-5.15: %h') > susfs_version.txt
+          cd kernel
+          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch .
+          cp ../susfs4ksu/kernel_patches/fs/susfs.c fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/
+          # fuzz-tolerant apply; any rejects are listed below and would surface
+          # as compile errors later in the build.
+          patch -p1 --forward --fuzz=3 < 50_add_susfs_in_gki-android13-5.15.patch || true
+          echo "=== .rej files (should be empty) ==="
+          find . -name '*.rej' -not -path './out/*' -print | tee ../susfs_rejects.txt
+          echo "=== KSU integration markers ==="
+          test -d KernelSU/kernel && echo "KernelSU kernel dir OK"
+          grep -n 'kernelsu' drivers/Makefile
+          grep -n 'drivers/kernelsu/Kconfig' drivers/Kconfig
+
       - name: Commit tree fixes for a clean vermagic
         run: |
           set -e
@@ -163,8 +195,10 @@ jobs:
           # checkout of this OSS tree: the plain release "5.15.78", so every
           # built module carries the same vermagic as the official clean build.
           printf 'out/\nbuild.log\n' >> .gitignore
-          git add -A
-          git -c user.email=ci@localhost -c user.name=ci commit -q -m 'CI: OSS tree fixes (dangling Kconfig source, hwid stub)' || true
+          # KernelSU is an embedded git checkout; record it as a gitlink and add
+          # its files explicitly so the tracked tree is complete.
+          git add -A 2>/dev/null || git add -A
+          git -c user.email=ci@localhost -c user.name=ci commit -q -m 'CI: OSS tree fixes + SukiSU-Ultra + SUSFS (clean vermagic)' || true
           git log --oneline -2
 
       - name: Set up AOSP prebuilt clang (official toolchain pinned by the kernel tree)
@@ -295,6 +329,33 @@ jobs:
             echo "ERROR: ThinLTO was not enabled in final config"
             exit 1
           fi
+
+      - name: Enable SukiSU-Ultra + SUSFS kernel options
+        run: |
+          set -e
+          cd kernel
+          # SukiSU-Ultra (builtin branch) ships the full KSU_SUSFS Kconfig menu;
+          # enable root + every SUSFS hiding feature explicitly.
+          ./scripts/config --file out/.config \
+            -e KSU \
+            -e KSU_SUSFS \
+            -e KSU_SUSFS_SUS_PATH \
+            -e KSU_SUSFS_SUS_MOUNT \
+            -e KSU_SUSFS_SUS_KSTAT \
+            -e KSU_SUSFS_SUS_MAP \
+            -e KSU_SUSFS_SPOOF_UNAME \
+            -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            -e KSU_SUSFS_OPEN_REDIRECT \
+            -e KSU_SUSFS_ENABLE_LOG \
+            -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
+          echo "=== SukiSU-Ultra + SUSFS config ==="
+          grep -E 'CONFIG_KSU(_|=/)' out/.config || true
+          grep -E 'CONFIG_KSU_SUSFS' out/.config || true
+          grep -q '^CONFIG_KSU=y' out/.config
+          grep -q '^CONFIG_KSU_SUSFS=y' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y' out/.config
+          echo "KSU + SUSFS options all enabled"
 
       - name: Build kernel
         timeout-minutes: 270
@@ -486,6 +547,13 @@ jobs:
             echo "lto mode        : $LTO_MODE"
             echo "werror          : disabled + KCFLAGS -Wno-error=implicit-int (newer clang compatibility)"
             echo "hwid.h          : stubbed (drivers/misc/hwid/ stripped from OSS tree)"
+            if [ -f "$GITHUB_WORKSPACE/ksu_version.txt" ]; then
+              echo "root solution   : $(cat "$GITHUB_WORKSPACE/ksu_version.txt")"
+              echo "susfs           : $(cat "$GITHUB_WORKSPACE/susfs_version.txt") + full option set"
+              echo "susfs rejects   : $(wc -l < "$GITHUB_WORKSPACE/susfs_rejects.txt") .rej file(s) from 50_add_susfs"
+            else
+              echo "root solution   : none (vanilla official kernel)"
+            fi
             echo "boot image      : boot.img (v4, official params, unsigned - no GKI boot_signature)"
             echo "vendor_boot     : vendor_boot.img (v4, official cmdline, official module lists; dtb only when stock/vendor_boot.img is provided - DTS is stripped from the OSS tree)"
             echo "init_boot       : pass-through stock/init_boot.img when provided (generic ramdisk is AOSP userspace; release string matches the official clean OSS build)"

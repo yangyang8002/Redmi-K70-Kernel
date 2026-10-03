@@ -82,6 +82,18 @@ GitHub 免费单任务上限 6 小时，完整 `Image + modules` 构建在 4 核
 - `vendor_boot.img` 内不含 `hwid.ko`、`mi_power.ko` 等小米闭源模块（OSS 树剥离了其源码，无法编译）；官方清单内其余模块齐全。
 - 编译 K70 系列 other 型号需改 workflow 中的分支与配置片段：`bsp-manet-u-oss`（K70 Pro，manet）/ `bsp-duchamp-u-oss`（K70E，duchamp）。
 
+## SukiSU-Ultra + SUSFS 分支（`sukisu-susfs`）
+
+`sukisu-susfs` 分支在官方内核之上移植 **SukiSU-Ultra（root）+ SUSFS（隐藏）**：
+
+- **SukiSU-Ultra**：用官方 `setup.sh` 接入 `builtin` 分支（该分支内核侧已内置 SUSFS 改造——静态 hook、无 kprobe 依赖、自带完整 `KSU_SUSFS` Kconfig 菜单，无需再打 `10_enable_susfs_for_ksu.patch`）；
+- **SUSFS 内核补丁**：官方源 [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) `gki-android13-5.15` 分支——新增 `fs/susfs.c`、`include/linux/susfs.h`、`susfs_def.h`，并用 `50_add_susfs_in_gki-android13-5.15.patch` 把 hook 嵌入 `fs/`、`kernel/`、`mm/`、`security/selinux/` 等文件（`--forward --fuzz=3` 容错应用，`.rej` 数量写入 BUILD-INFO）；
+- **配置**：`CONFIG_KSU=y` + 全部 SUSFS 选项（`SUS_PATH`/`SUS_MOUNT`/`SUS_KSTAT`/`SUS_MAP`/`SPOOF_UNAME`/`SPOOF_CMDLINE_OR_BOOTCONFIG`/`OPEN_REDIRECT`/`ENABLE_LOG`/`HIDE_KSU_SUSFS_SYMBOLS`）；
+- **vermagic**：所有移植修改会被提交掉，release 仍为干净的 `5.15.78`，与官方产物一致；
+- 产物结构与 `main` 分支完全一致（`boot.img` / `vendor_boot.img` / 模块包等），ThinLTO 默认开启。
+
+**配套管理器**：刷入后请安装 [SukiSU-Ultra 官方 Manager](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)（其已内置 SUSFS 模块支持，无需另装 susfs 模块）。
+
 ## 参考
 
 - [MiCode/Xiaomi_Kernel_OpenSource](https://github.com/MiCode/Xiaomi_Kernel_OpenSource)
