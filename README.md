@@ -22,7 +22,7 @@
 - **LTO 模式**：默认 **ThinLTO**（`CONFIG_LTO_CLANG_THIN=y`，内存占用与耗时更低）；官方 `gki_defconfig` 使用 `CONFIG_LTO_CLANG_FULL=y`，如需完全一致可在 Run workflow 时选择 `full`（或 `none`）。
 - 构建前会自动清理小米开源树中的**悬空 Kconfig `source` 引用**（如 `drivers/misc/hwid/Kconfig`——对应目录未随源码开源，直接构建会报 `can't open file`）。清理规则只匹配**带引号、不含 `$(VAR)` 变量且目标文件确实缺失**的真实 source 语句，不会误删 `arch/$(SRCARCH)/Kconfig` 这类合法引用或帮助文本。
 - 所有 `make` 调用都重定向了 stdin（`< /dev/null`）：该内核树的构建脚本里存在**裸 `bc` 调用**，会阻塞在 stdin 上导致构建假死（曾出现 6 小时零输出）。
-- GKI 默认强制 `CONFIG_WERROR=y`（源码里未直接设置，由 GKI Kconfig 强制）；apt 回退工具链 clang 18 比官方 clang r450784e 新，会把树里个别高通旧代码（如 `drivers/soc/qcom/minidump_log.c` 的 implicit-int）升级为错误，因此工作流会**关闭 WERROR**（降级为警告，不中断构建）。另外该树顶层 `Makefile` 还**硬编码**了 `-Werror=implicit-int` 和 `-Werror=implicit-function-declaration`（与 CONFIG_WERROR 无关），工作流通过 `KCFLAGS` 把 GKI 顶层 Makefile 硬编码的所有 `-Werror=` 类别（implicit-int、implicit-function-declaration、strict-prototypes、return-type、date-time、incompatible-pointer-types、designated-init）统一降级为警告（KCFLAGS 在 KBUILD_CFLAGS 之后追加，优先级更高；警告仍会打印）。
+- GKI 默认强制 `CONFIG_WERROR=y`（源码里未直接设置，由 GKI Kconfig 强制）；apt 回退工具链 clang 18 比官方 clang r450784e 新，会把树里个别高通旧代码（如 `drivers/soc/qcom/minidump_log.c` 的 implicit-int）升级为错误，因此工作流会**关闭 WERROR**（降级为警告，不中断构建）。另外该树顶层 `Makefile` 还**硬编码**了 `-Werror=implicit-int` 和 `-Werror=implicit-function-declaration`（与 CONFIG_WERROR 无关），工作流通过 `KCFLAGS` 把 GKI 顶层 Makefile 硬编码的、clang 认识的 `-Werror=` 类别（implicit-int、implicit-function-declaration、strict-prototypes、return-type、date-time、incompatible-pointer-types）统一降级为警告（KCFLAGS 在 KBUILD_CFLAGS 之后追加，优先级更高；警告仍会打印）。注意不能加入 clang 不认识的类别（如 GCC 专有的 designated-init），否则会让 `cc-option` 探测保留该旗标导致编译失败。
 
 ## 断点续编（应对 6 小时任务上限）
 

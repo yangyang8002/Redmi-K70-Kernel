@@ -261,9 +261,12 @@ jobs:
           # the official clang r450784e (e.g. minidump_log.c implicit-int,
           # mi_power.c strict-prototypes). KCFLAGS is appended after KBUILD_CFLAGS
           # so it overrides them all (downgrade to warnings, still printed).
+          # NOTE: only clang-known classes may appear here - a -Wno-error= for a
+          # class clang does not know (designated-init is GCC-only) makes the
+          # Makefile's cc-option probe keep that flag and clang errors out.
           # Never let make (or stray tools like a bare bc call in this tree) block on stdin
           make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 \
-               KCFLAGS='-Wno-error=implicit-int -Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -Wno-error=return-type -Wno-error=date-time -Wno-error=incompatible-pointer-types -Wno-error=designated-init' \
+               KCFLAGS='-Wno-error=implicit-int -Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -Wno-error=return-type -Wno-error=date-time -Wno-error=incompatible-pointer-types' \
                $BUILD_TARGETS < /dev/null 2>&1 | tee -a build.log
           echo "=== build output ==="
           ls -lh out/arch/arm64/boot/Image 2>/dev/null || true
