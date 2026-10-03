@@ -358,6 +358,13 @@ jobs:
           # seq/fence, slab internals, ADS_* symbols, PAGE_OWNER); it is a
           # panic-time debug feature - drop it from the minidump set.
           ./scripts/config --file out/.config -d QCOM_MINIDUMP_PANIC_DUMP
+          # qcom_iommu_util (official module list member) is the 5.15
+          # fast-pgtable/lazy-mapping IOMMU performance layer; porting it
+          # would mean porting the whole 5.15 IOMMU core API (which 6.6
+          # restructured around iommu_domain_ops) and would break the
+          # already-working 6.6 arm-smmu. Base mapping is provided by
+          # arm-smmu; disable the accelerator and document the loss.
+          ./scripts/config --file out/.config -d QCOM_IOMMU_UTIL
           # The 5.15 mem-hooks/mem-offline drivers depend on Qualcomm's
           # private 5.15 MM internals (mkswapd array, MAX_KSWAPD_THREADS)
           # that do not exist in 6.6 MM: skip them.
