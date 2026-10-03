@@ -257,7 +257,7 @@ jobs:
                 # composite-module object set definitions: allowlist only.
                 # The 5.15 clk-qcom-y members (vdd-class.o, clk-debug.o) need
                 # the 5.15 common.h and would pollute the 6.6 clk-qcom set.
-                qcom_logbuf_vh-*|qcom_iommu_util-*)
+                qcom_logbuf_vh-*|qcom_iommu_util-*|rproc_qcom_common-*)
                   grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
               esac
             done < "$v15m"
