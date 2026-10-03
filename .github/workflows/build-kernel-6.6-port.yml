@@ -132,6 +132,12 @@ jobs:
             n=$((n+1))
           done
           echo "class_create fixes applied"
+          # 6.9 made ww_mutex_trylock() take a ww_acquire_ctx too; the 5.15
+          # callers pass only the lock. Add NULL for single-arg calls.
+          grep -rl 'ww_mutex_trylock(' drivers/ 2>/dev/null | while read -r f; do
+            sed -i 's/ww_mutex_trylock(\([^,)]*\))/ww_mutex_trylock(\1, NULL)/g' "$f"
+          done
+          grep -rn 'ww_mutex_trylock(' drivers/clk/qcom/gdsc-regulator.c | head -n 4 || true
           # 5.15 BSP pinctrl drivers (kalama/crow) need the 5.15 msm_pingroup
           # layout (wake_reg/wake_bit fields), which differs from upstream
           # 6.6's. Give them a private copy of the 5.15 header instead of
