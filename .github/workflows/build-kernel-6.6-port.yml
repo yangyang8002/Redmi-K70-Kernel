@@ -232,6 +232,9 @@ jobs:
                 # 5.15 common.h; skip it (6.6 has no dummy-clock concept).
                 obj-*clk-dummy.o*) ;;
                 obj-*) grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
+                # minidump module object set: 5.15 collects minidump pieces
+                # via minidump-$(CONFIG_QCOM_MINIDUMP_PANIC_DUMP) variables.
+                minidump-*) grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
               esac
             done < "$v15m"
             echo "  $pair/Makefile: +$added obj lines"
@@ -329,6 +332,11 @@ jobs:
           # qdss_bridge uses the 5.15-private MHI API (MHI_MAX_MTU, two-arg
           # mhi calls); it is a debug facility not in the official list.
           ./scripts/config --file out/.config -d QCOM_QDSS_BRIDGE
+          # In 5.15 the QTI_HW_KEY_MANAGER_V1 inline stubs and the real
+          # crypto-qti-hwkm functions are mutually exclusive; after the
+          # merge both got enabled and collide. Keep the real driver
+          # (official module list member), drop the V1 stubs.
+          ./scripts/config --file out/.config -d QTI_HW_KEY_MANAGER_V1
           # Batch: every soc/qcom target that is fragment=m, NOT in the
           # official vermeer module list, and built on 5.15-private
           # frameworks (sleep-stats collectors, dump collectors, BAM/SPS
