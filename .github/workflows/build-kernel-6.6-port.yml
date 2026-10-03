@@ -270,6 +270,11 @@ jobs:
           # which is what appends the minidump-y line in the first place.
           sed -i 's/minidump-y[[:space:]]*+= msm_minidump.o minidump_log.o/minidump-y   += msm_minidump.o/' drivers/soc/qcom/Makefile
           grep 'minidump-y' drivers/soc/qcom/Makefile || true
+          # debug_symbol.c (official module list member) includes the 5.15
+          # drivers/staging/android/debug_kinfo.h via a relative path; 6.6
+          # has no such file. Copy it in.
+          mkdir -p drivers/staging/android
+          cp ../vermeer/drivers/staging/android/debug_kinfo.h drivers/staging/android/
 
       - name: Generate .config (gki_defconfig + vermeer fragment)
         run: |
