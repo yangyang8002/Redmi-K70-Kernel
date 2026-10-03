@@ -183,6 +183,11 @@ jobs:
           test -d KernelSU/kernel && echo "KernelSU kernel dir OK"
           grep -n 'kernelsu' drivers/Makefile
           grep -n 'drivers/kernelsu/Kconfig' drivers/Kconfig
+          # Record every file this run modified (patched sources + KernelSU +
+          # drivers hooks). The build step re-touches these so make rebuilds
+          # them even when resuming from a cached out/ tree.
+          git status --porcelain --untracked-files=all > "$GITHUB_WORKSPACE/modified_files.txt" || true
+          wc -l < "$GITHUB_WORKSPACE/modified_files.txt"
 
       - name: Commit tree fixes for a clean vermagic
         run: |
@@ -349,6 +354,11 @@ jobs:
             -e KSU_SUSFS_ENABLE_LOG \
             -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
+          # Force auto.conf/autoconf.h to reflect the new .config. With a
+          # restored build cache the epoch-touch below makes Kconfig files look
+          # older than the cached auto.conf, so make would otherwise skip
+          # syncconfig entirely and compile with stale (vanilla) macros.
+          make O=out ARCH=arm64 LLVM=1 syncconfig < /dev/null
           echo "=== SukiSU-Ultra + SUSFS config ==="
           grep -E 'CONFIG_KSU(_|=/)' out/.config || true
           grep -E 'CONFIG_KSU_SUSFS' out/.config || true
@@ -365,6 +375,14 @@ jobs:
           # Make all sources older than any restored out/ objects so make resumes instead of rebuilding
           # (non-fatal: broken symlinks like Documentation/devicetree/bindings must not abort)
           find . -not -path './out*' -exec touch -d @0 {} + 2>/dev/null || true
+          # Files modified this run (SukiSU/SUSFS patches, KernelSU, drivers
+          # hooks) must be NEWER than the cached objects so make rebuilds them.
+          if [ -f "$GITHUB_WORKSPACE/modified_files.txt" ]; then
+            awk '{print $NF}' "$GITHUB_WORKSPACE/modified_files.txt" | while IFS= read -r f; do
+              [ -e "$f" ] && touch "$f" || true
+            done
+            echo "re-touched files modified this run: $(wc -l < "$GITHUB_WORKSPACE/modified_files.txt")"
+          fi
           # The GKI top-level Makefile hardcodes -Werror= for several legacy C
           # warning classes; newer apt clang (18) detects more in this tree than
           # the official clang r450784e (e.g. minidump_log.c implicit-int,
