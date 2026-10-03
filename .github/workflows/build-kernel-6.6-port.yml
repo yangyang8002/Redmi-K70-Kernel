@@ -274,6 +274,19 @@ jobs:
           # 5.15-private rpmsg API (ept->rx_done etc.) was removed in 6.6 and
           # glink_pkt.ko is not in the official vermeer module list: skip it.
           ./scripts/config --file out/.config -d QCOM_GLINK_PKT
+          # The 5.15 BSP clock drivers (gcc/camcc/dispcc/tcsrcc/video/debugcc-
+          # kalama) depend on Qualcomm's private vdd-regulator header stack,
+          # which does not exist in 6.6. Use the upstream sm8550 clock drivers
+          # instead - they match the same DTB clock node compatibles.
+          ./scripts/config --file out/.config \
+            -d SM_GCC_KALAMA -d SM_CAMCC_KALAMA -d SM_DISPCC_KALAMA \
+            -d SM_TCSRCC_KALAMA -d SM_VIDEOCC_KALAMA -d SM_DEBUGCC_KALAMA
+          ./scripts/config --file out/.config \
+            -m SM_GCC_8550 -m SM_CAMCC_8550 -m SM_DISPCC_8550 \
+            -m SM_GPUCC_8550 -m SM_VIDEOCC_8550 || true
+          # 5.15 pmic_glink client struct differs from 6.6's; battery debug
+          # is not in the official vermeer module list - skip it.
+          ./scripts/config --file out/.config -d QTI_BATTERY_GLINK_DEBUG
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           KFLAG=""
           [ "$KEEP_GOING" = "true" ] && KFLAG="-k"
