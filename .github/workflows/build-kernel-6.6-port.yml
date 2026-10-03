@@ -244,6 +244,12 @@ jobs:
             v15m="../vermeer/$pair/Makefile"
             g66m="$pair/Makefile"
             [ -f "$v15m" ] && [ -f "$g66m" ] || continue
+            # Composite-module set names ALREADY defined in the 6.6 Makefile
+            # must not be polluted (5.15 clk-qcom-y members need 5.15 headers);
+            # every other 5.15 composite set line is copied so its obj- target
+            # has a build rule (minidump is trimmed by the sed below).
+            grep -E '^[a-zA-Z0-9_-]+-(y|objs|\$\(CONFIG_[A-Z0-9_]+\))[[:space:]]*[:+]?=' "$g66m" \
+              | sed -E 's/^([a-zA-Z0-9_-]+)-.*/\1/' | sort -u > /tmp/g66sets.txt || :
             added=0
             while IFS= read -r line; do
               case "$line" in
@@ -251,13 +257,11 @@ jobs:
                 # 5.15 common.h; skip it (6.6 has no dummy-clock concept).
                 obj-*clk-dummy.o*) ;;
                 obj-*) grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
-                # minidump module object set: 5.15 collects minidump pieces
-                # via minidump-$(CONFIG_QCOM_MINIDUMP_PANIC_DUMP) variables.
-                minidump-*) grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
-                # composite-module object set definitions: allowlist only.
-                # The 5.15 clk-qcom-y members (vdd-class.o, clk-debug.o) need
-                # the 5.15 common.h and would pollute the 6.6 clk-qcom set.
-                qcom_logbuf_vh-*|qcom_iommu_util-*|rproc_qcom_common-*)
+                # composite-module object set definitions (name-y/objs/name-$(CONFIG...)):
+                # copy only if that set name is NOT already defined in the 6.6 Makefile.
+                *-y[[:space:]]*:=*|*-y[[:space:]]*+=*|*-objs[[:space:]]*:=*|*-objs[[:space:]]*+=*|*-\$\(CONFIG_*))
+                  sname=$(printf '%s' "$line" | sed -E 's/^([a-zA-Z0-9_-]+)-.*/\1/')
+                  grep -qx "$sname" /tmp/g66sets.txt && continue
                   grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
               esac
             done < "$v15m"
