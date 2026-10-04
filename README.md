@@ -1,156 +1,154 @@
-# How do I submit patches to Android Common Kernels
+# 红米 K70（vermeer）官方内核 · GitHub Actions 自动编译
 
-1. BEST: Make all of your changes to upstream Linux. If appropriate, backport to the stable releases.
-   These patches will be merged automatically in the corresponding common kernels. If the patch is already
-   in upstream Linux, post a backport of the patch that conforms to the patch requirements below.
-   - Do not send patches upstream that contain only symbol exports. To be considered for upstream Linux,
-additions of `EXPORT_SYMBOL_GPL()` require an in-tree modular driver that uses the symbol -- so include
-the new driver or changes to an existing driver in the same patchset as the export.
-   - When sending patches upstream, the commit message must contain a clear case for why the patch
-is needed and beneficial to the community. Enabling out-of-tree drivers or functionality is not
-a persuasive case.
+[![Build Redmi K70 Kernel](https://github.com/yangyang8002/Redmi-K70-Kernel/actions/workflows/build-kernel.yml/badge.svg)](https://github.com/yangyang8002/Redmi-K70-Kernel/actions/workflows/build-kernel.yml)
 
-2. LESS GOOD: Develop your patches out-of-tree (from an upstream Linux point-of-view). Unless these are
-   fixing an Android-specific bug, these are very unlikely to be accepted unless they have been
-   coordinated with kernel-team@android.com. If you want to proceed, post a patch that conforms to the
-   patch requirements below.
+> ## ⚠️ 实验性 linux-6.6 分支（`linux-6.6`）
+>
+> **[<img src="https://github.com/yangyang8002/Redmi-K70-Kernel/actions/workflows/build-kernel-6.6.yml/badge.svg?branch=linux-6.6" alt="Build 6.6" height="20">](https://github.com/yangyang8002/Redmi-K70-Kernel/actions/workflows/build-kernel-6.6.yml)**（[工作流](.github/workflows/build-kernel-6.6.yml)）
+>
+> ### ⛔ 不可用于日用 / 不要刷入真机
+>
+> 此分支将内核从 5.15 迁移到 **Linux 6.6**，但这是一个**纯实验性构建**：
+>
+> - **基线**：AOSP GKI [`android15-6.6`](https://android.googlesource.com/kernel/common/+/refs/heads/android15-6.6) 分支（当前 **6.6.143**，GKI 2.0 / Android 15 基线）+ 小米 MiCode 5.15 树的 [`vermeer_GKI.config`](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/bsp-vermeer-t-oss/arch/arm64/configs/vendor/vermeer_GKI.config) 配置片段合并（高通官方 fragment 流程）。
+> - **为什么无法日用**：vermeer 的设备驱动（显示 / 相机 / 基带 / 传感器 / 触控等）只存在于 5.15 vendor 树；6.6 GKI 树中**没有这些驱动**（配置项在 `olddefconfig` 时被丢弃）。同时原厂 vendor_boot / vendor_dlkm 里的模块是按 **android13-5.15 KMI** 编译的，与 6.6 内核 vermagic 不兼容。刷入后**无法启动或硬件全部失效**。
+> - **Root 方案**：与 `sukisu-susfs` 分支相同 —— SukiSU-Ultra（`builtin` 分支）+ SUSFS（[`gki-android15-6.6`](https://gitlab.com/simonpunk/susfs4ksu/-/tree/gki-android15-6.6) 补丁，0 rejects），全部 `CONFIG_KSU_SUSFS_*` 选项开启。
+> - **vermagic**：`6.6.143-android15-6.6`（对齐官方 GKI release 格式；禁用 `LOCALVERSION_AUTO` 去掉 `-g<sha>` 后缀）。
+> - **vendor_boot**：实验性打包 —— GKI 6.6 树自产的模块（flat 布局）；GKI 树没有 vermeer 的 vendor 模块清单（`gki_system_dlkm_modules` / `modules.list.msm.vermeer` 是 5.15 树文件）。
+> - **结论**：满足"尝试迁移到 6.6"的构建可行性验证 —— 6.6 GKI 基线 + vermeer 配置可完整编译出 Image / 模块 / boot.img / vendor_boot.img；但要做出**可日用的 6.6**，需要小米官方放出 6.6 vendor 源码（OSS 分支），或整个 vendor 驱动栈的社区移植（数月工作量）。
+>
+> 调研结论（2026-10）：MiCode 无任何 6.6 分支（266 个分支全查）；LineageOS / Everest / 一加等同 SoC（SM8550）社区树全部停留在 5.15 —— **不存在现成的 vermeer 6.6 基线**。
 
-# Common Kernel patch requirements
+本仓库使用 GitHub Actions 从**小米官方开源内核仓库**编译红米 K70 的官方内核源码。
 
-- All patches must conform to the Linux kernel coding standards and pass `scripts/checkpatch.pl`
-- Patches shall not break gki_defconfig or allmodconfig builds for arm, arm64, x86, x86_64 architectures
-(see  https://source.android.com/setup/build/building-kernels)
-- If the patch is not merged from an upstream branch, the subject must be tagged with the type of patch:
-`UPSTREAM:`, `BACKPORT:`, `FROMGIT:`, `FROMLIST:`, or `ANDROID:`.
-- All patches must have a `Change-Id:` tag (see https://gerrit-review.googlesource.com/Documentation/user-changeid.html)
-- If an Android bug has been assigned, there must be a `Bug:` tag.
-- All patches must have a `Signed-off-by:` tag by the author and the submitter
+- 设备：小米 红米 K70（代号 `vermeer`，骁龙 8 Gen 2 / SM8550；海外对应 POCO F6 Pro）
+- 源码：[MiCode/Xiaomi_Kernel_OpenSource](https://github.com/MiCode/Xiaomi_Kernel_OpenSource) 分支 `bsp-vermeer-t-oss`
+  - 该分支 HEAD 提交：*"Kernel: Xiaomi kernel changes for Redmi K70 Android U"*（基于高通 TAG `LA.VENDOR.13.2.0.r1-14800-r1.0.r1_00043.0`）
+  - 内核版本：**5.15**（GKI 2.0 / android13-5.15 基线，基于 SM8550 Kalama BSP）
 
-Additional requirements are listed below based on patch type
+## 分支即源码（自包含仓库）
 
-## Requirements for backports from mainline Linux: `UPSTREAM:`, `BACKPORT:`
+**每个分支都包含完整内核源码树**（由 [import-source.yml](<.github/workflows/import-source.yml>) 从官方上游导入并预应用该分支全部补丁），clone 即可本地编译——见各分支根目录的 [LOCAL_BUILD.md](<LOCAL_BUILD.md>)。
 
-- If the patch is a cherry-pick from Linux mainline with no changes at all
-    - tag the patch subject with `UPSTREAM:`.
-    - add upstream commit information with a `(cherry picked from commit ...)` line
-    - Example:
-        - if the upstream commit message is
-```
-        important patch from upstream
+| 分支 | 内容 |
+|---|---|
+| `main` | MiCode 5.15.78 官方源码（含 Kconfig 修复、hwid stub） |
+| `sukisu-susfs` | main + SukiSU-Ultra + SUSFS 预应用 |
+| `linux-6.6` | AOSP GKI android15-6.6（6.6.143）+ vermeer_GKI.config + SukiSU |
+| `linux-6.6-port` | 6.6 + 完整 5.15 厂商驱动移植（含相机栈，见下文） |
 
-        This is the detailed description of the important patch
+> ⚠️ Windows 本机无法完整 checkout 内核源码树（树内含仅靠大小写区分的文件如 `xt_CONNMARK.h`/`xt_connmark.h`，以及 Windows 保留名 `aux.c`）——本地编译请用 Linux 或 WSL2 的 ext4 目录。CI 在这些分支上自动检测仓内源码树并直接使用（不再重复 clone 上游）。
 
-        Signed-off-by: Fred Jones <fred.jones@foo.org>
-```
->- then Joe Smith would upload the patch for the common kernel as
-```
-        UPSTREAM: important patch from upstream
+## 构建流程（与内核树自带的官方流程一致）
 
-        This is the detailed description of the important patch
+小米量产机使用的 `vermeer_user_defconfig` 并未包含在开源树中，因此本仓库完全按照内核树自带的官方构建配置 `build.config.msm.gki`（`VARIANT=gki`）执行：
 
-        Signed-off-by: Fred Jones <fred.jones@foo.org>
+1. 用官方 `scripts/kconfig/merge_config.sh -m -r -y` 将 `gki_defconfig` + `vendor/vermeer_GKI.config` 合并为 `vendor/vermeer-gki_defconfig`
+2. `make O=out ARCH=arm64 LLVM=1 vendor/vermeer-gki_defconfig`
+3. `make -j$(nproc) O=out ARCH=arm64 LLVM=1 Image modules`（与 `build.config.aarch64` 的 `MAKE_GOALS="Image modules"` 一致）
 
-        Bug: 135791357
-        Change-Id: I4caaaa566ea080fa148c5e768bb1a0b6f7201c01
-        (cherry picked from commit c31e73121f4c1ec41143423ac6ce3ce6dafdcec1)
-        Signed-off-by: Joe Smith <joe.smith@foo.org>
-```
+工具链：优先使用内核树 `build.config.constants` 中固定的 AOSP 官方预编译 **clang r450784e**；下载失败时自动回退到 Ubuntu 仓库 clang（也可用 Run workflow 输入强制指定）。
 
-- If the patch requires any changes from the upstream version, tag the patch with `BACKPORT:`
-instead of `UPSTREAM:`.
-    - use the same tags as `UPSTREAM:`
-    - add comments about the changes under the `(cherry picked from commit ...)` line
-    - Example:
-```
-        BACKPORT: important patch from upstream
+- **LTO 模式**：默认 **ThinLTO**（`CONFIG_LTO_CLANG_THIN=y`，内存占用与耗时更低）；官方 `gki_defconfig` 使用 `CONFIG_LTO_CLANG_FULL=y`，如需完全一致可在 Run workflow 时选择 `full`（或 `none`）。
+- 构建前会自动清理小米开源树中的**悬空 Kconfig `source` 引用**（如 `drivers/misc/hwid/Kconfig`——对应目录未随源码开源，直接构建会报 `can't open file`）。清理规则只匹配**带引号、不含 `$(VAR)` 变量且目标文件确实缺失**的真实 source 语句，不会误删 `arch/$(SRCARCH)/Kconfig` 这类合法引用或帮助文本。
+- OSS 树整个剥离了 `drivers/misc/hwid/`，但 `drivers/usb/repeater/repeater-qti-pmic-eusb2.c` 仍包含 `../../misc/hwid/hwid.h` 并调用 `get_hw_version_platform()`/`get_hw_country_version()`。工作流会生成一个 **stub 头文件**（返回值不匹配任何真实项目/国家），使 eUSB2 驱动走标准 `qcom,param-override-seq` 调参路径（ms scheme 关闭）；真实设备上小米的国别/硬件特调不会生效。
+- 所有 `make` 调用都重定向了 stdin（`< /dev/null`）：该内核树的构建脚本里存在**裸 `bc` 调用**，会阻塞在 stdin 上导致构建假死（曾出现 6 小时零输出）。
+- GKI 默认强制 `CONFIG_WERROR=y`（源码里未直接设置，由 GKI Kconfig 强制）；apt 回退工具链 clang 18 比官方 clang r450784e 新，会把树里个别高通旧代码（如 `drivers/soc/qcom/minidump_log.c` 的 implicit-int）升级为错误，因此工作流会**关闭 WERROR**（降级为警告，不中断构建）。另外该树顶层 `Makefile` 还**硬编码**了 `-Werror=implicit-int` 和 `-Werror=implicit-function-declaration`（与 CONFIG_WERROR 无关），工作流通过 `KCFLAGS` 把 GKI 顶层 Makefile 硬编码的、clang 认识的 `-Werror=` 类别（implicit-int、implicit-function-declaration、strict-prototypes、return-type、date-time、incompatible-pointer-types）统一降级为警告（KCFLAGS 在 KBUILD_CFLAGS 之后追加，优先级更高；警告仍会打印）。注意不能加入 clang 不认识的类别（如 GCC 专有的 designated-init），否则会让 `cc-option` 探测保留该旗标导致编译失败。
 
-        This is the detailed description of the important patch
+## 断点续编（应对 6 小时任务上限）
 
-        Signed-off-by: Fred Jones <fred.jones@foo.org>
+GitHub 免费单任务上限 6 小时，完整 `Image + modules` 构建在 4 核 runner 上可能超时。工作流会把 `kernel/out` 构建树缓存到 actions/cache（键 `k70-out-<分支>-<run_id>`，恢复时按前缀取最近一次），构建步骤自带 **270 分钟**超时——超时会先把 `out/` 存入缓存再退出，下一次运行把源码时间戳回拨后自动**断点续编**（已编译对象直接复用）；也可在 Run workflow 时用 `build_targets` 输入手动分轮（先 `Image`，再 `modules`）。
 
-        Bug: 135791357
-        Change-Id: I4caaaa566ea080fa148c5e768bb1a0b6f7201c01
-        (cherry picked from commit c31e73121f4c1ec41143423ac6ce3ce6dafdcec1)
-        [joe: Resolved minor conflict in drivers/foo/bar.c ]
-        Signed-off-by: Joe Smith <joe.smith@foo.org>
-```
+## 产物（Actions Artifacts）
 
-## Requirements for other backports: `FROMGIT:`, `FROMLIST:`,
+| 文件 | 说明 |
+|---|---|
+| `boot.img` | **Boot 镜像**（boot image header v4，官方参数，未签名） |
+| `vendor_boot.img` | **Vendor Boot 镜像**（v4，官方 cmdline + 官方模块清单；见下方打包说明） |
+| `init_boot.img` | **Init Boot 镜像**（提供 `stock/init_boot.img` 时原样附带；见下方说明） |
+| `vendor_ramdisk.cpio.gz` | vendor_boot 的 vendor ramdisk 原始 cpio（供自定义重打包） |
+| `vendor_boot.modules.load` / `vendor_dlkm-modules.tar.gz` | 第一阶段模块清单 / vendor_dlkm 分区模块集（镜像外模块） |
+| `boot/Image` | 内核镜像（GKI `Image`，未压缩，`boot.img` 的 kernel 段同物） |
+| `boot/System.map` | 符号表 |
+| `Module.symvers` | 模块符号版本（编译外部模块需要） |
+| `modules.tar.gz` | 全部内核模块（`modules_install` + depmod） |
+| `kernel.config` / `merged-defconfig` | 实际使用的内核配置 |
+| `BUILD-INFO.txt` | 源码提交、内核版本、工具链等元信息 |
+| `build.log` | 完整构建日志 |
 
-- If the patch has been merged into an upstream maintainer tree, but has not yet
-been merged into Linux mainline
-    - tag the patch subject with `FROMGIT:`
-    - add info on where the patch came from as `(cherry picked from commit <sha1> <repo> <branch>)`. This
-must be a stable maintainer branch (not rebased, so don't use `linux-next` for example).
-    - if changes were required, use `BACKPORT: FROMGIT:`
-    - Example:
-        - if the commit message in the maintainer tree is
-```
-        important patch from upstream
+## Boot / Init Boot / Vendor Boot 打包说明
 
-        This is the detailed description of the important patch
+官方打包参数全部取自内核树自带的 `build.config.msm.vermeer` / `build.config.msm.common`：
 
-        Signed-off-by: Fred Jones <fred.jones@foo.org>
-```
->- then Joe Smith would upload the patch for the common kernel as
-```
-        FROMGIT: important patch from upstream
+- `boot.img`：`mkbootimg --header_version 4 --kernel Image --cmdline "" --base 0x80000000 --pagesize 4096`（`BOOT_IMAGE_HEADER_VERSION=4`、`BASE_ADDRESS`、`PAGE_SIZE` 均官方值）。GKI boot v4 的 cmdline 为空，引导参数在 vendor_boot 的 `vendor_cmdline` 里。**未签名**（GKI `boot_signature` 需 Google 认证密钥，无法生成）。
+- `vendor_boot.img`：`vendor_cmdline` 为官方 gki 变体值（`console=ttyMSM0,115200n8 earlycon=qcom_geni,0x00a9C000 qcom_geni_serial.con_enabled=1 nosoftlockup bootconfig`）；vendor ramdisk 按官方规则构造——`android/gki_system_dlkm_modules` + `modules.list.msm.vermeer` 两个官方清单内的模块（过滤掉 OSS 树剥离后无法编译的，如 `hwid.ko`）+ `modules.load` + 官方 blocklist + depmod 元数据；其余模块按官方 `prepare_vendor_dlkm` 逻辑归入 `vendor_dlkm-modules.tar.gz`。
+- `init_boot.img`：其 generic ramdisk 是 **AOSP 用户态**（`/init` 二进制、linker 等），不属于内核源码，内核树无法构建。本构建通过提交树内修复消除 `-dirty` 后缀，release 字符串（`5.15.78`）与官方从此 OSS 树干净构建的产物一致；若你手上官方 init_boot 内模块的 vermagic 与 `5.15.78` 不一致（小米出厂固件可能由内部树构建、带不同后缀），则不能直通——需用本仓库的模块重打 ramdisk。把官方 `init_boot.img` 放进仓库 `stock/` 目录重新触发构建，它会被原样打进 artifacts。
 
-        This is the detailed description of the important patch
+### 如何补齐 DTB 与官方镜像参数（`stock/` 目录）
 
-        Signed-off-by: Fred Jones <fred.jones@foo.org>
+内核树不包含设备树（`DTB_DIR=vendor/qcom` 的 DTS 被 OSS 剥离），因此默认打包的 `vendor_boot.img` **不含 DTB**。补齐方法：
 
-        Bug: 135791357
-        (cherry picked from commit 878a2fd9de10b03d11d2f622250285c7e63deace
-         https://git.kernel.org/pub/scm/linux/kernel/git/foo/bar.git test-branch)
-        Change-Id: I4caaaa566ea080fa148c5e768bb1a0b6f7201c01
-        Signed-off-by: Joe Smith <joe.smith@foo.org>
-```
+1. 用 [payload-dumper-go](https://github.com/ssut/payload-dumper-go) 从红米 K70 官方完整卡刷包（`.zip` 内 `payload.bin`）提取 `boot.img`、`init_boot.img`、`vendor_boot.img`、`vbmeta.img`；
+2. 在本仓库建 `stock/` 目录，放入 `vendor_boot.img`（必需，用于提取真实设备 DTB + bootconfig）和 `init_boot.img`（用于附带），提交推送或手动触发构建；
+3. 构建会自动从 `stock/vendor_boot.img` 解包提取 DTB 与 bootconfig，用官方参数重打 `vendor_boot.img`，并把 `stock/init_boot.img` 原样附进 artifacts。
 
+### 刷机（自行承担风险）
 
-- If the patch has been submitted to LKML, but not accepted into any maintainer tree
-    - tag the patch subject with `FROMLIST:`
-    - add a `Link:` tag with a link to the submittal on lore.kernel.org
-    - add a `Bug:` tag with the Android bug (required for patches not accepted into
-a maintainer tree)
-    - if changes were required, use `BACKPORT: FROMLIST:`
-    - Example:
-```
-        FROMLIST: important patch from upstream
+- 前提：Bootloader 已解锁；产物未签名，需关闭 AVB 校验：
+  `fastboot flash vbmeta --disable-verity --disable-verification vbmeta.img`（vbmeta 用官方卡刷包提取的那份）
+- 刷入三件：`fastboot flash boot boot.img` → `fastboot flash vendor_boot vendor_boot.img` →（如提供了 stock）`fastboot flash init_boot init_boot.img`
+- `vendor_dlkm-modules.tar.gz` 中的模块对应真机 `vendor_dlkm` 分区；如需刷入需自行重打包 ext4/EROFS 镜像（超出本仓库范围）。
+- 首次刷自定义内核建议先 `fastboot boot boot.img` 临时引导测试（无 dtb 的 vendor_boot 在真机上无法引导时，必须先补齐 `stock/vendor_boot.img`）。
 
-        This is the detailed description of the important patch
+## 使用
 
-        Signed-off-by: Fred Jones <fred.jones@foo.org>
+- **自动触发**：推送到 `main` 分支即触发构建
+- **手动触发**：Actions → *Build Redmi K70 Kernel* → *Run workflow*（可选源码分支、工具链、LTO 模式、构建目标 `build_targets`）
 
-        Bug: 135791357
-        Link: https://lore.kernel.org/lkml/20190619171517.GA17557@someone.com/
-        Change-Id: I4caaaa566ea080fa148c5e768bb1a0b6f7201c01
-        Signed-off-by: Joe Smith <joe.smith@foo.org>
-```
+## 实验性分支：linux-6.6-port（6.6 + 厂商驱动移植）
 
-- If a patch has been submitted to the community, but rejected, do NOT use the
-  `FROMLIST:` tag to try to hide this fact.  Use the `ANDROID:` tag as
-  described below as this must be considered as an Android-specific submission,
-  not an upstream submission as the community will not accept these changes
-  as-is.
+`linux-6.6-port` 分支在 AOSP GKI android15-6.6（6.6.143）之上移植了 MiCode vermeer 5.15 开源厂商驱动栈，CI 全绿（build-kernel-6.6-port.yml）。
 
-## Requirements for Android-specific patches: `ANDROID:`
+> **诚实声明：编译通过 ≠ 可以开机**。SM8550（骁龙 8 Gen 2，kalama）整机厂驱动栈迁到 6.6 属无先例操作；运行时正确性（能否开机、各外设是否工作）**只能在真机上验证**，CI 无法保证。刷入风险自负，务必备份 boot/init_boot/vendor_boot 原厂镜像。
 
-- If the patch is fixing a bug to Android-specific code
-    - tag the patch subject with `ANDROID:`
-    - add a `Fixes:` tag that cites the patch with the bug
-    - Example:
-```
-        ANDROID: fix android-specific bug in foobar.c
+**移植架构**：msm DRM/摄像头媒体栈整目录替换；soc/clk/pinctrl/interconnect 等以 5.15 版覆盖 6.6 同名文件（仅当 6.6 无同名文件时）；Kconfig/Makefile 自动合并 5.15 定义块；编译期 API 漂移逐个适配（class_create、ww_mutex、iommu domain ops、qcom_icc_node、android_debug_symbol 等约 40 处）。
 
-        This is the detailed description of the important fix
+**官方模块清单覆盖：49/108**（另有 ufs_qcom 等以 6.6 上游横线文件名构建，名单按 basename 严格匹配会误判为 missing）。已构建的关键栈：
 
-        Fixes: 1234abcd2468 ("foobar: add cool feature")
-        Change-Id: I4caaaa566ea080fa148c5e768bb1a0b6f7201c01
-        Signed-off-by: Joe Smith <joe.smith@foo.org>
-```
+- **FBE 全盘加密链**：hwkm.ko + crypto-qti-hwkm.ko + crypto-qti-common.ko + tmecom-intf.ko + qcom-scm.ko（含 qtee_shmbridge + 移植的 qcom_scm ES v2 调用）——userdata 加密挂载所需
+- **存储**：ufs-qcom.ko + qcom_ice.ko + phy-qcom-ufs-qmp-v4-kalama.ko + sdhci-msm.ko + cqhci.ko
+- **SoC 基础**：pinctrl-kalama、pinctrl-msm、clk-rpmh、icc-rpmh、qcom_rpmh、smem、socinfo、cmd-db、qcom_ipcc、qcom_aoss、qcom-pdc
+- **调试/可靠性**：minidump.ko（core）、debug_symbol、qcom_logbuf_vh、dcc_v2、iommu-logger、arm_smmu
+- **上游替代 5.15 私有驱动**：gcc/dispcc/videocc/gpucc-sm8550（时钟）、interconnect-qcom-sm8550（总线）、qcom-tsens（温度）、qcom-wdt（看门狗）
+- **安全/内存缓冲**：secure_buffer.ko、qcom_wdt_core.ko、memory_dump_v2.ko、mem_buf.ko、mem_buf_dev.ko（qcom_scm_assign_mem_regions 等 3 个 SCM 函数从 5.15 移植）
 
-- If the patch is a new feature
-    - tag the patch subject with `ANDROID:`
-    - add a `Bug:` tag with the Android bug (required for android-specific features)
+### 相机路线（进行中）
 
+QTI 相机内核栈（cam_req_mgr/cam_isp/...）在所有公开源树中均被剥离（MiCode vermeer/fuxi、OnePlusOSS sm8550 均无），stock 系统的 camera.ko（vendor_dlkm 分区，5.15 ABI）无法在 6.6 加载。**唯一可行路线是上游 camss + libcamera**（AOSP 风格拍照，非 MIUI 相机）：
+
+- **camss v6.15 全目录 backport**（SM8550 Titan 780 ISP：camss-csid-780、camss-vfe-780、csiphy-3ph-1-0）——6.6 原生 camss 只注册到 sm8250
+- **camcc-sm8550**（相机时钟控制器，从 v6.8 backport）
+- **ov50e.c 传感器驱动**（新写）：主摄 OV50E（OVX8000），寄存器表来自摩托罗拉官方 GPL 内核树（mot_aion），chip id 0x5045、I2C 0x10、C-PHY 3-trio，含 8192x6144@20 / 4096x3072@30 / 2048x1536@120 模式
+- **vermeer-camss-test.dts**：手写相机 DT（stock DTB 的相机节点被小米剥离，已从官方 HyperOS 3 线刷包验证）；camcc/cci0/camss 平台节点取自上游 sm8550.dtsi
+- 相机硬件情报（从官方包 odm/vendor_dlkm 分区提取）：主摄 OV50E 双供、超广 IMX355（6.6 上游有现成驱动）、前摄 OV16A1Q/GC16B3、微距 GC02M1；电源轨 cam_vio=1.8V / cam_vdig=1.1V / cam_vana=2.8V
+- **运行时未经真机验证**：传感器实际 CCI 通道/CSIPHY 通道/reset GPIO/PMIC LDO 映射需真机 dmesg 确认
+
+**已知接受的损失**（官方清单内但放弃移植）：
+
+- 显示/GPU(kgsl)/WiFi 闭源相关约 40 个：OSS 源码被小米剥离，5.15 时代就编不出，与 6.6 无关（**相机除外**——已走上游 camss 修复路线，见上节）
+- `sched-walt`：WALT 调度器深度依赖 5.15 的 cfs_rq 内部结构，6.6 调度器重构后无法缝合（退回上游 EAS）
+- `qcom_iommu_util`：5.15 fast-pgtable IOMMU 加速器，移植需整体替换 6.6 IOMMU 核心且会破坏已可用的 arm-smmu
+- `mem-hooks`/`mem-offline`/`minidump_log`/`QCOM_MINIDUMP_PANIC_DUMP`：依赖 6.6 已移除的 mm/kallsyms 内部接口
+- `clk-dummy` 等 kalama 私有时钟：由上游 sm8550 时钟驱动替代（功能等价）
+
+## 说明与注意
+
+- 红米 K70 的**设备树（DTB）不在开源内核树中**（`DTB_DIR=vendor/qcom` 的 DTS 被 OSS 剥离）；默认 `vendor_boot.img` 不含 DTB，按上方 `stock/` 目录方法补齐后即为完整可引导配置。
+- 产物的签名密钥与小米官方发布的不同（**未签名**，无 GKI boot_signature），官方线刷/卡刷包校验不会通过；解锁 Bootloader 并关闭 AVB 校验后可 `fastboot` 刷入（见上方刷机节）。模块已与本内核配套重打包进 `vendor_boot.img`。
+- `vendor_boot.img` 内不含 `hwid.ko`、`mi_power.ko` 等小米闭源模块（OSS 树剥离了其源码，无法编译）；官方清单内其余模块齐全。
+- 编译 K70 系列 other 型号需改 workflow 中的分支与配置片段：`bsp-manet-u-oss`（K70 Pro，manet）/ `bsp-duchamp-u-oss`（K70E，duchamp）。
+
+## 参考
+
+- [MiCode/Xiaomi_Kernel_OpenSource](https://github.com/MiCode/Xiaomi_Kernel_OpenSource)
+- 内核树内官方构建配置：`build.config.msm.vermeer` / `build.config.msm.gki` / `build.config.aarch64`
