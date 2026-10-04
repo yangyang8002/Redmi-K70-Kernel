@@ -602,12 +602,9 @@ jobs:
             exit 1
           fi
 
-      - name: Restore build tree cache (resume across iterations)
-        uses: actions/cache/restore@v4
-        with:
-          path: kernel/out
-          key: port-66-out-${{ github.run_id }}
-          restore-keys: port-66-out-
+      # NOTE: no build-tree cache here. An orphan port-66-out-* cache from an
+      # early workflow revision poisoned packaged artifacts (post-build restore
+      # overwrote out/.config with a stale 2421-line MODULES=n config).
 
       - name: Package port output (Image + modules + match report)
         if: always()
