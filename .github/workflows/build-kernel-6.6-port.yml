@@ -383,6 +383,10 @@ jobs:
           # upstream clock switch above); icc-rpmh/bcm-voter already build.
           ./scripts/config --file out/.config -d INTERCONNECT_QCOM_KALAMA
           ./scripts/config --file out/.config -m INTERCONNECT_QCOM_SM8550
+          # crow.c / kaka.c are the same 5.15-layout platform drivers for
+          # other SoCs (not vermeer); they hit the same icc_node rework.
+          ./scripts/config --file out/.config -d INTERCONNECT_QCOM_CROW
+          ./scripts/config --file out/.config -d INTERCONNECT_QCOM_KAKA
           # The 5.15 mem-hooks/mem-offline drivers depend on Qualcomm's
           # private 5.15 MM internals (mkswapd array, MAX_KSWAPD_THREADS)
           # that do not exist in 6.6 MM: skip them.
