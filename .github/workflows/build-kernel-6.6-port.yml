@@ -377,6 +377,12 @@ jobs:
           # module list and its mdm-pon members need 5.15-private headers;
           # SM8550 has no external MDM modem. Disable.
           ./scripts/config --file out/.config -d QCOM_ESOC
+          # The 5.15 kalama.c interconnect platform driver uses the 5.15
+          # qcom_icc_node layout (noc_ops/qosbox) which 6.6 restructured.
+          # Use the upstream sm8550.c platform driver instead (same as the
+          # upstream clock switch above); icc-rpmh/bcm-voter already build.
+          ./scripts/config --file out/.config -d INTERCONNECT_QCOM_KALAMA
+          ./scripts/config --file out/.config -m INTERCONNECT_QCOM_SM8550
           # The 5.15 mem-hooks/mem-offline drivers depend on Qualcomm's
           # private 5.15 MM internals (mkswapd array, MAX_KSWAPD_THREADS)
           # that do not exist in 6.6 MM: skip them.
