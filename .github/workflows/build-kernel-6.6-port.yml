@@ -384,6 +384,41 @@ jobs:
           #    which we dropped; delete the guarded call.
           sed -i '/^[[:space:]]*msm_minidump_log_init();$/d' drivers/soc/qcom/msm_minidump.c
           grep -n 'msm_minidump_log_init' drivers/soc/qcom/msm_minidump.c || echo '  log_init call removed'
+          # 5) shm-bridge wrappers + KP init call: qtee_shmbridge.c (now part
+          #    of qcom-scm.ko) needs qcom_scm_{enable,delete,create}_shm_bridge
+          #    and scm_mem_protection_init_do, which exist only in the 5.15
+          #    qcom_scm.c. 6.6 also renamed qcom_scm_call_noretry() to
+          #    qcom_scm_call_atomic() - provide a compat wrapper. Extract the
+          #    5.15 bodies from the cloned vermeer tree; add missing macros.
+          for macro in QCOM_SCM_SVC_MP QCOM_SCM_MEMP_SHM_BRDIGE_CREATE \
+                       QCOM_SCM_MEMP_SHM_BRIDGE_ENABLE QCOM_SCM_MEMP_SHM_BRIDGE_DELETE \
+                       SCM_SVC_RTIC TZ_HLOS_NOTIFY_CORE_KERNEL_BOOTUP; do
+            if ! grep -rq "define $macro[[:space:]]" drivers/firmware/ 2>/dev/null; then
+              def=$(grep -rh "define $macro[[:space:]]" ../vermeer/drivers/firmware/ ../vermeer/include/ 2>/dev/null | head -n1)
+              if [ -n "$def" ]; then
+                sed -i "\$ i $def" drivers/firmware/qcom_scm.h
+                echo "  macro added: $def"
+              fi
+            fi
+          done
+          grep -q 'linux/sched.h' drivers/firmware/qcom_scm.c || \
+            sed -i '0,/#include/s//#include <linux\/sched.h>\n#include/' drivers/firmware/qcom_scm.c
+          if ! grep -q 'int qcom_scm_call_noretry(' drivers/firmware/qcom_scm.c; then
+            printf 'int qcom_scm_call_noretry(struct device *dev, struct qcom_scm_desc *desc,\n                        struct qcom_scm_res *res)\n{\n        return qcom_scm_call_atomic(dev, desc, res);\n}\nEXPORT_SYMBOL(qcom_scm_call_noretry);\n\n' >> drivers/firmware/qcom_scm.c
+          fi
+          for fname in qcom_scm_enable_shm_bridge qcom_scm_delete_shm_bridge \
+                       qcom_scm_create_shm_bridge scm_mem_protection_init_do; do
+            if ! grep -q "$fname(" drivers/firmware/qcom_scm.c; then
+              awk -v fname="$fname" '
+                $0 ~ "^[a-zA-Z_].*[^a-zA-Z0-9_]" fname "\\(" { inf=1 }
+                inf { print }
+                inf && /^}/ { seen=1; next }
+                inf && seen && /^EXPORT_SYMBOL/ { print ""; exit }
+                inf && seen && NF { exit }
+              ' ../vermeer/drivers/firmware/qcom_scm.c >> drivers/firmware/qcom_scm.c
+              echo "  $fname refs in qcom_scm.c now: $(grep -c "$fname" drivers/firmware/qcom_scm.c)"
+            fi
+          done
 
       - name: Generate .config (gki_defconfig + vermeer fragment)
         run: |
