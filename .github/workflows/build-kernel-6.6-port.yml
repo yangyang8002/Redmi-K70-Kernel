@@ -586,7 +586,7 @@ jobs:
           # Upstream replacements for 5.15-private thermal/watchdog drivers
           # (qcom_tsens/qcom_wdt_core are not portable; the upstream SM8550
           # capable drivers must be enabled or thermal protection is blind).
-          ./scripts/config --file out/.config -e QCOM_TSENS -e QCOM_WDT
+          ./scripts/config --file out/.config -e NVMEM_QCOM_QFPROM -e QCOM_TSENS -e QCOM_WDT
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           KFLAG=""
           [ "$KEEP_GOING" = "true" ] && KFLAG="-k"
