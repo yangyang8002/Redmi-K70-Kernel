@@ -391,7 +391,7 @@ static unsigned int eud_get_mctrl(struct uart_port *port)
 }
 
 static void eud_set_termios(struct uart_port *port, struct ktermios *new,
-				const struct ktermios *old)
+				const const struct ktermios *old)
 {
 	/* Nothing to do here, but to satisfy the serial core */
 }

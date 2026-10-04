@@ -172,4 +172,7 @@ static inline int qcom_scm_remap_error(int err)
 #define QCOM_SCM_MEMP_SHM_BRIDGE_DELETE			0x1d
 #define SCM_SVC_RTIC                                0x19
 #define TZ_HLOS_NOTIFY_CORE_KERNEL_BOOTUP           0x7
+#define QCOM_SCM_BOOT_SEC_WDOG_DIS		0x07
+#define QCOM_SCM_UTIL_DUMP_TABLE_ASSIGN		0x13
+#define QCOM_SCM_SVC_UTIL			0x03
 #endif
