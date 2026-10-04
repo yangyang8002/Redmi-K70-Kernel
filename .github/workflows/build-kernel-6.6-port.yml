@@ -534,7 +534,10 @@ jobs:
         run: |
           set -o pipefail
           cd "$GITHUB_WORKSPACE/kernel"
-          ./scripts/config --file out/.config -d WERROR
+          echo "PWD=$(pwd)"
+          ls -ld out out/.config scripts/config 2>&1 | head -n 6
+          head -c 60 scripts/config | od -c | head -n 2
+          bash ./scripts/config --file out/.config -d WERROR
           case "$LTO_MODE" in
             thin) ./scripts/config --file out/.config -d LTO_NONE -e LTO_CLANG_THIN ;;
             full) ./scripts/config --file out/.config -d LTO_NONE -e LTO_CLANG_FULL ;;
