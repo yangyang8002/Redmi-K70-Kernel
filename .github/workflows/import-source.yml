@@ -1,0 +1,662 @@
+name: Import kernel source tree into a branch
+
+# One-shot importer: assembles the complete, locally-buildable kernel
+# source tree for a branch and pushes it. After import, each branch holds
+# the full kernel source with the branch's patches already applied, so
+# anyone can clone it on Linux and build per LOCAL_BUILD.md.
+#
+# Why cloud-side: the kernel tree contains case-conflicting files
+# (include/uapi/linux/netfilter/xt_CONNMARK.h vs xt_connmark.h, etc.)
+# that cannot coexist on a default Windows/macOS filesystem, so the
+# import must run on a case-sensitive filesystem (ubuntu-latest).
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Branch to import the source tree into'
+        required: true
+        type: choice
+        options: [ main, sukisu-susfs, linux-6.6, linux-6.6-port ]
+      upstream_ref:
+        description: 'Override upstream branch/tag (empty = branch default)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  MICODE_REPO: https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
+  MICODE_BRANCH: bsp-vermeer-t-oss
+  GKI_REPO: https://android.googlesource.com/kernel/common.git
+  GKI_BRANCH: android15-6.6
+  VERMEER_FRAGMENT_URL: https://raw.githubusercontent.com/MiCode/Xiaomi_Kernel_OpenSource/53ef33eacdc4f7ac737451e4cfc91963d59e3956/arch/arm64/configs/vendor/vermeer_GKI.config
+
+jobs:
+  import:
+    name: Import source into ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target }}
+          path: kernel
+
+      - name: Maximize runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Install tools
+        run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends git rsync patch curl
+
+      - name: Import MiCode 5.15 tree (main / sukisu-susfs)
+        if: inputs.target == 'main' || inputs.target == 'sukisu-susfs'
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE"
+          REF="${{ inputs.upstream_ref }}"
+          [ -z "$REF" ] && REF="$MICODE_BRANCH"
+          git clone --depth=1 -b "$REF" "$MICODE_REPO" upstream
+          rsync -a --exclude=.git upstream/ kernel/
+          rm -rf upstream
+          cd kernel
+          # keep repo-level ignores alongside the kernel's own .gitignore
+          grep -qxF 'stock/' .gitignore || printf '\n# repo-level\nstock/\nout/\n' >> .gitignore
+          echo "imported $(git status --porcelain --untracked-files=all | wc -l) changed paths"
+
+      - name: Patch dangling Kconfig sources (MiCode tree quirk)
+        if: inputs.target == 'main' || inputs.target == 'sukisu-susfs'
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE/kernel"
+          removed=0
+          while IFS= read -r -d '' f; do
+            rel_dir="$(dirname "$f")"
+            changed=0
+            : > "$f.tmpfix"
+            while IFS= read -r line || [ -n "$line" ]; do
+              if [[ "$line" =~ ^(o|r|or)?source[[:space:]]+"([^"]+)" ]]; then
+                kind="${BASH_REMATCH[1]}"
+                p="${BASH_REMATCH[2]}"
+                case "$p" in
+                  *'$('*) printf '%s\n' "$line" >> "$f.tmpfix"; continue ;;
+                esac
+                if [ "$kind" = r ] || [ "$kind" = or ]; then
+                  test_p="$rel_dir/$p"
+                else
+                  test_p="$p"
+                fi
+                if [ ! -e "$test_p" ]; then
+                  removed=$((removed+1))
+                  changed=1
+                  continue
+                fi
+              fi
+              printf '%s\n' "$line" >> "$f.tmpfix"
+            done < "$f"
+            if [ "$changed" = 1 ]; then mv "$f.tmpfix" "$f"; else rm -f "$f.tmpfix"; fi
+          done < <(find . -name 'Kconfig*' -type f -not -path './scripts/kconfig/tests/*' -print0)
+          echo "dangling Kconfig sources removed: $removed"
+
+      - name: Stub stripped hwid.h (MiCode tree quirk)
+        if: inputs.target == 'main' || inputs.target == 'sukisu-susfs'
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE/kernel"
+          mkdir -p drivers/misc/hwid
+          cat > drivers/misc/hwid/hwid.h <<'EOF'
+          /* Stub for the stripped drivers/misc/hwid/ (Xiaomi OSS tree quirk). */
+          #ifndef _HWID_STUB_H
+          #define _HWID_STUB_H
+
+          enum country_version_stub {
+              CountryCN = 100,
+          };
+
+          enum hardware_project_stub {
+              HARDWARE_PROJECT_M2 = 101,
+              HARDWARE_PROJECT_M3 = 102,
+              HARDWARE_PROJECT_N11 = 103,
+          };
+
+          static inline int get_hw_version_platform(void) { return -1; }
+          static inline int get_hw_country_version(void) { return -1; }
+
+          #endif /* _HWID_STUB_H */
+          EOF
+          echo "created stub drivers/misc/hwid/hwid.h"
+
+      - name: Import GKI 6.6 tree (linux-6.6 / linux-6.6-port)
+        if: inputs.target == 'linux-6.6' || inputs.target == 'linux-6.6-port'
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE"
+          REF="${{ inputs.upstream_ref }}"
+          [ -z "$REF" ] && REF="$GKI_BRANCH"
+          git clone --depth=1 -b "$REF" "$GKI_REPO" upstream
+          rsync -a --exclude=.git upstream/ kernel/
+          rm -rf upstream
+          cd kernel
+          grep -qxF 'stock/' .gitignore || printf '\n# repo-level\nstock/\nout/\n' >> .gitignore
+          mkdir -p arch/arm64/configs/vendor
+          curl -fsSL --retry 3 -o arch/arm64/configs/vendor/vermeer_GKI.config "$VERMEER_FRAGMENT_URL"
+          echo "imported $(git status --porcelain --untracked-files=all | wc -l) changed paths"
+
+      - name: Integrate SukiSU-Ultra + SUSFS (gki-android13-5.15)
+        if: inputs.target == 'sukisu-susfs'
+        run: |
+          set -eo pipefail
+          cd "$GITHUB_WORKSPACE/kernel"
+          curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+          (cd KernelSU && git log -1 --format='SukiSU-Ultra builtin: %h %s')
+          cd "$GITHUB_WORKSPACE"
+          git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "gki-android13-5.15"
+          cd kernel
+          cp "../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch" .
+          cp ../susfs4ksu/kernel_patches/fs/susfs.c fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/
+          patch -p1 --forward --fuzz=3 < "50_add_susfs_in_gki-android13-5.15.patch" || true
+          # compatibility shims (identical to the build workflows)
+          if ! grep -qE '^[[:space:]]*#define VMA_PAD_START' fs/proc/task_mmu.c; then
+            if ! grep -rq 'define VMA_PAD_START' include/; then
+              { printf '#ifndef VMA_PAD_START\n#define VMA_PAD_START(vma) ((vma)->vm_end)\n#endif\n'; cat fs/proc/task_mmu.c; } > /tmp/task_mmu.c && mv /tmp/task_mmu.c fs/proc/task_mmu.c
+            fi
+          fi
+          if ! grep -q '^int ksu_handle_post_execveat_sucompat' fs/exec.c; then
+            cat >> fs/exec.c <<'SHIM'
+
+          #ifdef CONFIG_KSU_SUSFS
+          /* Compatibility shim for SukiSU-Ultra: no post-exec work is needed. */
+          int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
+                                                void *envp, int *flags, int *retval)
+          {
+              return 0;
+          }
+          #endif
+          SHIM
+          fi
+          echo "=== .rej files (should be empty) ==="
+          find . -name '*.rej' -not -path './out/*' -print
+          test -d KernelSU/kernel && echo "KernelSU kernel dir OK"
+          grep -n 'kernelsu' drivers/Makefile
+          grep -n 'drivers/kernelsu/Kconfig' drivers/Kconfig
+
+      - name: Integrate SukiSU-Ultra + SUSFS (gki-android15-6.6)
+        if: inputs.target == 'linux-6.6'
+        run: |
+          set -eo pipefail
+          cd "$GITHUB_WORKSPACE/kernel"
+          curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+          (cd KernelSU && git log -1 --format='SukiSU-Ultra builtin: %h %s')
+          cd "$GITHUB_WORKSPACE"
+          git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "gki-android15-6.6"
+          cd kernel
+          cp "../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch" .
+          cp ../susfs4ksu/kernel_patches/fs/susfs.c fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/
+          patch -p1 --forward --fuzz=3 < "50_add_susfs_in_gki-android15-6.6.patch" || true
+          # compatibility shims (identical to the build workflows)
+          if ! grep -qE '^[[:space:]]*#define VMA_PAD_START' fs/proc/task_mmu.c; then
+            if ! grep -rq 'define VMA_PAD_START' include/; then
+              { printf '#ifndef VMA_PAD_START\n#define VMA_PAD_START(vma) ((vma)->vm_end)\n#endif\n'; cat fs/proc/task_mmu.c; } > /tmp/task_mmu.c && mv /tmp/task_mmu.c fs/proc/task_mmu.c
+            fi
+          fi
+          if ! grep -q '^int ksu_handle_post_execveat_sucompat' fs/exec.c; then
+            cat >> fs/exec.c <<'SHIM'
+
+          #ifdef CONFIG_KSU_SUSFS
+          /* Compatibility shim for SukiSU-Ultra: no post-exec work is needed. */
+          int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
+                                                void *envp, int *flags, int *retval)
+          {
+              return 0;
+          }
+          #endif
+          SHIM
+          fi
+          echo "=== .rej files (should be empty) ==="
+          find . -name '*.rej' -not -path './out/*' -print
+          test -d KernelSU/kernel && echo "KernelSU kernel dir OK"
+          grep -n 'kernelsu' drivers/Makefile
+          grep -n 'drivers/kernelsu/Kconfig' drivers/Kconfig
+
+      - name: Apply vermeer vendor-driver port onto GKI 6.6 (linux-6.6-port)
+        if: inputs.target == 'linux-6.6-port'
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE"
+          git clone --depth=1 -b "$MICODE_BRANCH" "$MICODE_REPO" vermeer
+          # Byte-identical copy of the two tree-mutation steps of
+          # build-kernel-6.6-port.yml; keep them in sync.
+          set -e
+          cd "$GITHUB_WORKSPACE"
+          # BSP-only extras are merged with --ignore-existing so upstream 6.6
+          # drivers are never clobbered; full-stack dirs (display/camera/wlan)
+          # replace their 6.6 counterparts wholesale.
+          rsync -a vermeer/drivers/gpu/drm/msm/ kernel/drivers/gpu/drm/msm/
+          mkdir -p kernel/drivers/media/platform/msm
+          rsync -a vermeer/drivers/media/platform/msm/ kernel/drivers/media/platform/msm/
+          rsync -a --ignore-existing vermeer/drivers/soc/qcom/ kernel/drivers/soc/qcom/
+          rsync -a --ignore-existing vermeer/drivers/clk/qcom/ kernel/drivers/clk/qcom/
+          rsync -a --ignore-existing vermeer/drivers/pinctrl/qcom/ kernel/drivers/pinctrl/qcom/
+          rsync -a --ignore-existing vermeer/drivers/interconnect/qcom/ kernel/drivers/interconnect/qcom/
+          rsync -a --ignore-existing vermeer/drivers/iommu/ kernel/drivers/iommu/
+          rsync -a --ignore-existing vermeer/drivers/remoteproc/ kernel/drivers/remoteproc/
+          rsync -a --ignore-existing vermeer/drivers/phy/qualcomm/ kernel/drivers/phy/qualcomm/
+          rsync -a --ignore-existing vermeer/drivers/usb/ kernel/drivers/usb/
+          rsync -a --ignore-existing vermeer/drivers/net/wireless/vendor/ kernel/drivers/net/wireless/vendor/ 2>/dev/null || true
+          for d in drivers/staging/qcacld-3.0 drivers/staging/fw-api; do
+            [ -d "vermeer/$d" ] && rsync -a "vermeer/$d/" "kernel/$d/"
+          done
+          # 5.15 dt-bindings/uapi headers (qcom,ipcc.h etc.) are referenced by
+          # the BSP drivers; merge them without clobbering 6.6 headers.
+          # asm-generic is excluded: 5.15's asm-generic/termios.h conflicts
+          # with 6.6's include/linux/termios_internal.h declarations.
+          rsync -a --ignore-existing --exclude='asm-generic/' vermeer/include/ kernel/include/
+          test -f kernel/include/dt-bindings/soc/qcom,ipcc.h && echo "qcom,ipcc.h merged"
+          echo "=== copied tree stats ==="
+          du -sh kernel/drivers/gpu/drm/msm kernel/drivers/media/platform/msm kernel/drivers/soc/qcom 2>/dev/null
+          find kernel -name '*.ko' -o -name 'modules.order' | head -n1 >/dev/null || true
+
+
+          set -e
+          cd "$GITHUB_WORKSPACE/kernel"
+          # display: 6.6 drm/Kconfig already sources msm/Kconfig (upstream), and
+          # drm/Makefile already descends into msm/. Verify; add if missing.
+          grep -q 'source "drivers/gpu/drm/msm/Kconfig"' drivers/gpu/drm/Kconfig || echo 'source "drivers/gpu/drm/msm/Kconfig"' >> drivers/gpu/drm/Kconfig
+          # camera/media: hook msm/ into the platform Kconfig/Makefile
+          grep -q 'source "drivers/media/platform/msm/Kconfig"' drivers/media/platform/Kconfig || echo 'source "drivers/media/platform/msm/Kconfig"' >> drivers/media/platform/Kconfig
+          grep -q 'obj-y += msm/' drivers/media/platform/Makefile || printf 'obj-y += msm/\n' >> drivers/media/platform/Makefile
+          # qcacld: vermeer's drivers/staging/Kconfig/Makefile lines
+          for f in Kconfig Makefile; do
+            if [ -f "../vermeer/drivers/staging/$f" ]; then
+              grep -E 'qcacld|fw-api' "../vermeer/drivers/staging/$f" | while IFS= read -r line; do
+                grep -qF "$line" "drivers/staging/$f" || printf '%s\n' "$line" >> "drivers/staging/$f"
+              done
+            fi
+          done
+          echo "=== wired hooks ==="
+          grep -n 'msm' drivers/media/platform/Kconfig drivers/media/platform/Makefile || true
+          grep -n 'qcacld' drivers/staging/Kconfig drivers/staging/Makefile || true
+          # Linux 6.6 removed module_refcount(); AOSP's gunyah vm_mgr.c still
+          # references it but never rots because GKI keeps GUNYAH=n. The vermeer
+          # fragment enables GUNYAH, so drop the stale refcount check.
+          sed -i 's/WARN_ON(fn->mod \&\& module_refcount(fn->mod));/WARN_ON(0);/' drivers/virt/gunyah/vm_mgr.c
+          grep -n 'WARN_ON(0)' drivers/virt/gunyah/vm_mgr.c
+          # 6.4+ removed the owner arg from class_create(): fix every copied
+          # 5.15 driver that still calls class_create(THIS_MODULE, "name").
+          n=0
+          grep -rl 'class_create(THIS_MODULE' drivers/ arch/ 2>/dev/null | while read -r f; do
+            sed -i 's/class_create(THIS_MODULE, /class_create(/g' "$f"
+            echo "  fixed: $f"
+            n=$((n+1))
+          done
+          echo "class_create fixes applied"
+          # The 5.15 BSP hwkm headers include userspace <stdbool.h> /
+          # <stddef.h>; the kernel's bool and size_t already come from
+          # linux/types.h. Drop such includes.
+          for uh in stdbool.h stddef.h stdint.h; do
+            grep -rl "#include <$uh>" include/ drivers/ 2>/dev/null | while read -r f; do
+              sed -i "/#include <$uh>/d" "$f"
+              echo "  dropped $uh from: $f"
+            done
+          done
+          # ... and the same call split across two lines (dcc_v2.c style):
+          # class_create(THIS_MODULE,\n "name") - the single-line sed above
+          # missed it, so strip the owner arg at end-of-line too.
+          grep -rl 'class_create(THIS_MODULE,$' drivers/ arch/ 2>/dev/null | while read -r f; do
+            sed -i 's/class_create(THIS_MODULE,$/class_create(/' "$f"
+            echo "  multiline class_create fixed: $f"
+          done
+          # 6.2 made uart_ops.set_termios take a const old termios; fix the
+          # 5.15 eud uart driver signature to match.
+          sed -i '/eud_set_termios(struct uart_port \*port/,+1 s/struct ktermios \*old)/const struct ktermios *old)/' drivers/soc/qcom/eud.c
+          sed -n '393,394p' drivers/soc/qcom/eud.c || true
+          # msm_minidump pulls the boot banner from the 5.15-private
+          # android_debug_symbol(ADS_LINUX_BANNER) framework, which 6.6 does
+          # not have; substitute the kernel's standard version string.
+          sed -i 's|linux_banner = android_debug_symbol(ADS_LINUX_BANNER);|linux_banner = "Linux";|' drivers/soc/qcom/msm_minidump.c
+          # 6.6 FORTIFY statically flags the 5.15 banner/strtable writes in
+          # msm_minidump.c; that is port noise, not a real bug - disable
+          # fortify for just this object.
+          grep -q CFLAGS_msm_minidump drivers/soc/qcom/Makefile || \
+            echo 'CFLAGS_msm_minidump.o := -D__NO_FORTIFY' >> drivers/soc/qcom/Makefile
+          # minidump_log.c fix happens after the Makefile merge below
+          # (the minidump-y set line is only appended there).
+          # 6.9 made ww_mutex_trylock() take a ww_acquire_ctx too; the 5.15
+          # callers pass only the lock. Add NULL for single-arg calls.
+          grep -rl 'ww_mutex_trylock(' drivers/ 2>/dev/null | while read -r f; do
+            sed -i 's/ww_mutex_trylock(\([^,)]*\))/ww_mutex_trylock(\1, NULL)/g' "$f"
+          done
+          grep -rn 'ww_mutex_trylock(' drivers/clk/qcom/gdsc-regulator.c | head -n 4 || true
+          # 5.15 BSP pinctrl drivers (kalama/crow) need the 5.15 msm_pingroup
+          # layout (wake_reg/wake_bit fields), which differs from upstream
+          # 6.6's. Give them a private copy of the 5.15 header instead of
+          # clobbering the 6.6 one that upstream pinctrl-msm.c still uses.
+          cp ../vermeer/drivers/pinctrl/qcom/pinctrl-msm.h drivers/pinctrl/qcom/pinctrl-msm-v15.h
+          for f in drivers/pinctrl/qcom/pinctrl-kalama.c drivers/pinctrl/qcom/pinctrl-crow.c; do
+            [ -f "$f" ] && sed -i 's/#include "pinctrl-msm.h"/#include "pinctrl-msm-v15.h"/' "$f"
+          done
+          grep -l 'pinctrl-msm-v15' drivers/pinctrl/qcom/*.c 2>/dev/null || true
+          # Same pattern for the 5.15 BSP clock drivers (gcc/camcc/dispcc/
+          # tcsrcc/videocc-kalama): they need the 5.15 common.h (vdd_cx,
+          # HW_CLK_CTRL_MODE) and clk-debug.h, which differ from upstream's.
+          cp ../vermeer/drivers/clk/qcom/common.h drivers/clk/qcom/common-v15.h
+          [ -f ../vermeer/drivers/clk/qcom/clk-debug.h ] && cp ../vermeer/drivers/clk/qcom/clk-debug.h drivers/clk/qcom/clk-debug-v15.h
+          for f in drivers/clk/qcom/*kalama*.c drivers/clk/qcom/*crow*.c drivers/clk/qcom/clk-debug.c; do
+            [ -f "$f" ] || continue
+            sed -i 's/#include "common.h"/#include "common-v15.h"/; s/#include "clk-debug.h"/#include "clk-debug-v15.h"/' "$f"
+            echo "  clk header rewired: $f"
+          done
+          # and any other 5.15 BSP .c that made it in and includes common.h
+          for f in $(grep -l '#include "common.h"' drivers/clk/qcom/*.c 2>/dev/null); do
+            case "$f" in *kalama*|*crow*) continue ;; esac
+            grep -qF "vdd_cx" "$f" && { sed -i 's/#include "common.h"/#include "common-v15.h"/' "$f"; echo "  clk header rewired: $f"; } || true
+          done
+          # The 5.15 SoC platform symbols (ARCH_KALAMA/CROW/KAKA) do not exist
+          # in the 6.6 tree, so every vendor-driver Kconfig that depends on
+          # them was silently dropped at olddefconfig and no .ko was built.
+          # Define them so the merged vermeer fragment entries survive.
+          grep -q 'config ARCH_KALAMA' arch/arm64/Kconfig.platforms || \
+          printf 'config ARCH_KALAMA\n  bool\nconfig ARCH_CROW\n  bool\nconfig ARCH_KAKA\n  bool\n' >> arch/arm64/Kconfig.platforms
+          tail -n 12 arch/arm64/Kconfig.platforms
+          # rsync --ignore-existing never copied the 5.15 BSP Kconfig files
+          # (6.6 already has same-named ones), so every BSP module symbol was
+          # undefined at olddefconfig and no .ko was built. Merge each 5.15
+          # BSP Kconfig into its 6.6 counterpart: append only config blocks
+          # whose symbol is not already defined, and drop 'source' lines
+          # pointing at BSP files that do not exist in the 6.6 tree.
+          for pair in drivers/soc/qcom drivers/clk/qcom drivers/pinctrl/qcom \
+                      drivers/interconnect/qcom drivers/iommu drivers/remoteproc \
+                      drivers/phy/qualcomm drivers/usb drivers/edac ; do
+            v15="../vermeer/$pair/Kconfig"
+            g66="$pair/Kconfig"
+            [ -f "$v15" ] && [ -f "$g66" ] || continue
+            grep -E '^(config|menuconfig) ' "$g66" | awk '{print $2}' | sort -u > /tmp/defined.txt
+            awk -v DEFF=/tmp/defined.txt '
+              BEGIN { while ((getline l < DEFF) > 0) def[l]=1 }
+              /^(config|menuconfig) / { name=$2; blk=$0; inblk=1; keep=((name in def)?0:1); if (keep) print blk; next }
+              inblk && /^[ \t]/ { if (keep) print; next }
+              inblk && /^$/ { inblk=0; keep=0; print ""; next }
+              { inblk=0; keep=0 }
+            ' "$v15" | grep -v '^source ' >> "$g66" || true
+          done
+          echo "=== merged BSP Kconfig additions ==="
+          for pair in drivers/soc/qcom drivers/clk/qcom drivers/pinctrl/qcom; do
+            echo "$pair: $(grep -c '^config ' $pair/Kconfig) total configs"
+          done
+          # QTI_CRYPTO_COMMON depends on SCSI_UFS_CRYPTO_QTI/MMC_CRYPTO_QTI,
+          # 5.15-only symbols the 6.6 tree does not define (the 5.15 UFS
+          # stack was never copied), so olddefconfig kept it off and the
+          # crypto-qti-platform.h stubs collided with the real functions.
+          # Drop that one dependency line (AFTER the merge, so the block
+          # actually exists) so the lib can build standalone.
+          sed -i '/^config QTI_CRYPTO_COMMON/,/^config /{ /depends on SCSI_UFS_CRYPTO_QTI/d; }' drivers/soc/qcom/Kconfig
+          grep -A3 '^config QTI_CRYPTO_COMMON' drivers/soc/qcom/Kconfig | head -n 4 || true
+          # Same story for the Makefiles: rsync --ignore-existing never copied
+          # the 5.15 Makefiles, so obj-$(CONFIG_...) build rules for BSP modules
+          # (SM_GCC_KALAMA, PINCTRL_KALAMA, ...) were missing and modules with a
+          # surviving =m config were silently not built. Append every 5.15
+          # obj-* line the 6.6 Makefile does not already contain.
+          for pair in drivers/soc/qcom drivers/clk/qcom drivers/pinctrl/qcom \
+                      drivers/interconnect/qcom drivers/iommu drivers/remoteproc \
+                      drivers/phy/qualcomm drivers/usb drivers/edac ; do
+            v15m="../vermeer/$pair/Makefile"
+            g66m="$pair/Makefile"
+            [ -f "$v15m" ] && [ -f "$g66m" ] || continue
+            # Composite-module set names ALREADY defined in the 6.6 Makefile
+            # must not be polluted (5.15 clk-qcom-y members need 5.15 headers);
+            # every other 5.15 composite set line is copied so its obj- target
+            # has a build rule (minidump is trimmed by the sed below).
+            grep -E '^[a-zA-Z0-9_-]+-(y|objs|\$\(CONFIG_[A-Z0-9_]+\))[[:space:]]*[:+]?=' "$g66m" \
+              | sed -E 's/^([a-zA-Z0-9_-]+)-.*/\1/' | sort -u > /tmp/g66sets.txt || :
+            added=0
+            while IFS= read -r line; do
+              case "$line" in
+                # clk-dummy.o needs the 5.15-only clk_dummy struct from the
+                # 5.15 common.h; skip it (6.6 has no dummy-clock concept).
+                obj-*clk-dummy.o*) ;;
+                obj-*) grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
+                # composite-module object set definitions (name-y / name-objs /
+                # name-$(CONFIG...)): copy only if that set name is NOT already
+                # defined as a set in the 6.6 Makefile.
+                *)
+                  if printf '%s' "$line" | grep -qE '^[a-zA-Z0-9_-]+-(y|objs|\$\(CONFIG_[A-Z0-9_]+\))[[:space:]]*[:+]?='; then
+                    sname=$(printf '%s' "$line" | sed -E 's/^([a-zA-Z0-9_-]+)-.*/\1/')
+                    if ! grep -qx "$sname" /tmp/g66sets.txt && ! grep -qF "$line" "$g66m"; then
+                      echo "$line" >> "$g66m"; added=$((added+1))
+                    fi
+                  fi ;;
+              esac
+            done < "$v15m"
+            echo "  $pair/Makefile: +$added obj lines"
+          done
+          # minidump_log.c (part of the minidump-y object set) needs 5.15-only
+          # structures (cfs_rq.last, module.core_layout, android_debug_symbol,
+          # old vendor-hook signature); drop the debug-log exporter from the
+          # set, keep the minidump core. Must run AFTER the merge above,
+          # which is what appends the minidump-y line in the first place.
+          sed -i 's/minidump-y[[:space:]]*+= msm_minidump.o minidump_log.o/minidump-y   += msm_minidump.o/' drivers/soc/qcom/Makefile
+          grep 'minidump-y' drivers/soc/qcom/Makefile || true
+          # 6.6 upstream already builds qcom_common.o as its own module
+          # (obj-$(CONFIG_QCOM_RPROC_COMMON) += qcom_common.o); the 5.15
+          # rproc_qcom_common-y set lines re-wrap the SAME qcom_common.o
+          # into rproc_qcom_common.ko, exporting every symbol twice at
+          # modpost. Drop the two appended 5.15 lines.
+          sed -i '/^obj-$(CONFIG_QCOM_RPROC_COMMON)[[:space:]]*+= rproc_qcom_common.o$/d; /^rproc_qcom_common-y[[:space:]]*:=/d' drivers/remoteproc/Makefile
+          grep -n 'rproc_qcom_common' drivers/remoteproc/Makefile || echo '  rproc_qcom_common lines removed'
+          # 6.6 upstream already builds qcom_common.o as its own module
+          # (obj-$(CONFIG_QCOM_RPROC_COMMON) += qcom_common.o); the 5.15
+          # rproc_qcom_common-y set lines re-wrap the SAME qcom_common.o
+          # into rproc_qcom_common.ko, exporting every symbol twice at
+          # modpost. Drop the two appended 5.15 lines.
+          sed -i '/^obj-$(CONFIG_QCOM_RPROC_COMMON)[[:space:]]*+= rproc_qcom_common.o$/d; /^rproc_qcom_common-y[[:space:]]*:=/d' drivers/remoteproc/Makefile
+          grep -n 'rproc_qcom_common' drivers/remoteproc/Makefile || echo '  rproc_qcom_common lines removed'
+          # debug_symbol.c (official module list member) includes the 5.15
+          # drivers/staging/android/debug_kinfo.h via a relative path; 6.6
+          # has no such file. Copy it in.
+          mkdir -p drivers/staging/android
+          cp ../vermeer/drivers/staging/android/debug_kinfo.h drivers/staging/android/
+          # --- FBE crypto stack wiring (hwkm + crypto-qti-hwkm are official) ---
+          # 1) tmecom Kconfig: the merge dropped 'source' lines, so
+          #    MSM_TMECOM_QMP never existed; re-add the source line.
+          grep -q 'tmecom/Kconfig' drivers/soc/qcom/Kconfig || \
+            echo 'source "drivers/soc/qcom/tmecom/Kconfig"' >> drivers/soc/qcom/Kconfig
+          grep -q 'mem_buf/Kconfig' drivers/soc/qcom/Kconfig || \
+            echo 'source "drivers/soc/qcom/mem_buf/Kconfig"' >> drivers/soc/qcom/Kconfig
+          # 6.6 const-qualified the class devnode callback (struct device ->
+          # const struct device); adapt the 5.15 mem_buf callback.
+          sed -i 's/(struct device \*dev, umode_t \*mode)/(const struct device *dev, umode_t *mode)/' drivers/soc/qcom/mem_buf/mem-buf-ids.c
+          grep -n 'const struct device \*dev, umode_t' drivers/soc/qcom/mem_buf/mem-buf-ids.c | head -n 2
+          # 6.6 exports dma_buf_* in the DMA_BUF namespace; 5.15 sources never
+          # import it (namespaces did not apply). Append MODULE_IMPORT_NS.
+          for f in drivers/soc/qcom/mem_buf/*.c; do
+            grep -q 'MODULE_IMPORT_NS(DMA_BUF)' "$f" || \
+              printf '\nMODULE_IMPORT_NS(DMA_BUF);\n' >> "$f"
+          done
+          grep -l 'MODULE_IMPORT_NS(DMA_BUF)' drivers/soc/qcom/mem_buf/*.c | wc -l
+          # 1b) Camera phase 1: backport the whole camss subsystem from v6.15
+          #    (SM8550 Titan 780: camss.c sm8550 resources, camss-csid-780,
+          #    camss-vfe-780, updated csiphy-3ph, camss-format helper) and
+          #    camcc-sm8550.c from v6.8. 6.6's camss registers only up to
+          #    sm8250; the v6.15 sources use no streams-API so they should
+          #    build against the 6.6 V4L2 core. Payload lives in the repo
+          #    under port-6.6/ (33 camss files + camcc + dt-bindings header).
+          rsync -a "$GITHUB_WORKSPACE/kernel/port-6.6/camss-6.15/" drivers/media/platform/qcom/camss/
+          cp "$GITHUB_WORKSPACE/kernel/port-6.6/camcc-sm8550.c" drivers/clk/qcom/
+          cp "$GITHUB_WORKSPACE/kernel/port-6.6/qcom,sm8550-camcc.h" include/dt-bindings/clock/
+          grep -q 'camcc-sm8550' drivers/clk/qcom/Makefile ||             echo 'obj-$(CONFIG_SM_CAMCC_8550) += camcc-sm8550.o' >> drivers/clk/qcom/Makefile
+          if ! grep -q 'config SM_CAMCC_8550' drivers/clk/qcom/Kconfig; then
+            printf 'config SM_CAMCC_8550\n\ttristate "SM8550 Camera Clock Controller"\n\tdepends on ARM64 || COMPILE_TEST\n\tselect SM_GCC_8550\n\thelp\n\t  Camera clock controller for SM8550.\n' >> drivers/clk/qcom/Kconfig
+          fi
+          grep -c 'camss-csid-780\|camss-vfe-780' drivers/media/platform/qcom/camss/Makefile
+          # 1c) OV50E (OVX8000) main-sensor driver: new V4L2 subdev written
+          #    from Motorola's GPL OV50E kernel driver register tables
+          #    (chip id 0x5045, i2c 0x10, xclk 24MHz, avdd/dovdd/dvdd).
+          cp "$GITHUB_WORKSPACE/kernel/port-6.6/ov50e.c" drivers/media/i2c/
+          grep -q 'ov50e' drivers/media/i2c/Makefile ||             echo 'obj-$(CONFIG_VIDEO_OV50E) += ov50e.o' >> drivers/media/i2c/Makefile
+          if ! grep -q 'config VIDEO_OV50E' drivers/media/i2c/Kconfig; then
+            printf 'config VIDEO_OV50E\n\ttristate "OmniVision OV50E sensor support"\n\tdepends on I2C && VIDEO_DEV\n\tselect MEDIA_CONTROLLER\n\tselect VIDEO_V4L2_SUBDEV_API\n\tselect V4L2_FWNODE\n\thelp\n\t  OmniVision OV50E 50MP sensor (Redmi K70 main camera).\n' >> drivers/media/i2c/Kconfig
+          fi
+          # 1d) Camera phase 1 DT: vermeer camss/cci/camcc/ov50e test DTB.
+          #    Stock DTBs ship zero camera nodes (Xiaomi stripped them), so
+          #    this test DT re-creates the platform nodes from upstream.
+          cp "$GITHUB_WORKSPACE/kernel/port-6.6/vermeer-camss-test.dts" arch/arm64/boot/dts/qcom/sm8550-vermeer-camss-test.dts
+          grep -q 'vermeer-camss-test' arch/arm64/boot/dts/qcom/Makefile ||             echo 'dtb-$(CONFIG_ARCH_QCOM) += sm8550-vermeer-camss-test.dtb' >> arch/arm64/boot/dts/qcom/Makefile
+          # 2) qtee_shmbridge: lives in drivers/firmware/ in 5.15, outside the
+          #    rsync set. Copy it and hook it into the qcom-scm composite set
+          #    (6.6 uses qcom-scm-y) plus its Kconfig block.
+          cp ../vermeer/drivers/firmware/qtee_shmbridge.c ../vermeer/drivers/firmware/qtee_shmbridge_internal.h drivers/firmware/
+          grep -q 'qtee_shmbridge' drivers/firmware/Makefile || \
+            echo 'qcom-scm-$(CONFIG_QTEE_SHM_BRIDGE) += qtee_shmbridge.o' >> drivers/firmware/Makefile
+          grep -n 'qcom-scm' drivers/firmware/Makefile | head -n 4
+          grep -q 'config QTEE_SHM_BRIDGE' drivers/firmware/Kconfig || \
+            printf 'config QTEE_SHM_BRIDGE\n\tbool "QTI TEE shared memory bridge"\n\tdepends on QCOM_SCM\n\tdefault y if QCOM_SCM\n\thelp\n\t  QTEE shared memory bridge driver provides kernel APIs to share\n\t  memory between trustzone and other VMs through shared memory bridge.\n\n' >> drivers/firmware/Kconfig
+          # 3) qcom_scm ES v2 calls: crypto-qti-hwkm needs
+          #    config_set_ice_key/clear_ice_key/derive_raw_secret, which only
+          #    exist in the 5.15 qcom_scm.c. Append the macros (missing in
+          #    6.6's local qcom_scm.h), the header decls, and the bodies.
+          grep -q 'QCOM_SCM_ES_DERIVE_RAW_SECRET' drivers/firmware/qcom_scm.h || \
+            sed -i '/#define QCOM_SCM_ES_CONFIG_SET_ICE_KEY/a #define QCOM_SCM_ES_CONFIG_SET_ICE_KEY_V2 0x05\n#define QCOM_SCM_ES_CLEAR_ICE_KEY\t\t0x06\n#define QCOM_SCM_ES_DERIVE_RAW_SECRET\t0x07' drivers/firmware/qcom_scm.h
+          grep -n 'QCOM_SCM_ES' drivers/firmware/qcom_scm.h
+          grep -q 'qcom_scm_derive_raw_secret' include/linux/qcom_scm.h || \
+            sed -i 's|^#endif /\* __QCOM_SCM_H \*/$|extern int qcom_scm_config_set_ice_key(uint32_t index, phys_addr_t paddr, size_t size, uint32_t cipher, unsigned int data_unit, unsigned int ce);\nextern int qcom_scm_clear_ice_key(uint32_t index, unsigned int ce);\nextern int qcom_scm_derive_raw_secret(phys_addr_t paddr_key, size_t size_key, phys_addr_t paddr_secret, size_t size_secret);\n\n#endif /* __QCOM_SCM_H */|' include/linux/qcom_scm.h
+          grep -n 'derive_raw_secret' include/linux/qcom_scm.h
+          grep -q 'qcom_scm_derive_raw_secret' drivers/firmware/qcom_scm.c || cat >> drivers/firmware/qcom_scm.c <<'SCMEOF'
+
+          int qcom_scm_config_set_ice_key(uint32_t index, phys_addr_t paddr, size_t size,
+                                          uint32_t cipher, unsigned int data_unit,
+                                          unsigned int ce)
+          {
+                  struct qcom_scm_desc desc = {
+                          .svc = QCOM_SCM_SVC_ES,
+                          .cmd = QCOM_SCM_ES_CONFIG_SET_ICE_KEY_V2,
+                          .owner = ARM_SMCCC_OWNER_SIP,
+                          .args[0] = index,
+                          .args[1] = paddr,
+                          .args[2] = size,
+                          .args[3] = cipher,
+                          .args[4] = data_unit,
+                          .args[5] = ce,
+                          .arginfo = QCOM_SCM_ARGS(6, QCOM_SCM_VAL, QCOM_SCM_RW,
+                                                  QCOM_SCM_VAL, QCOM_SCM_VAL,
+                                                  QCOM_SCM_VAL, QCOM_SCM_VAL),
+                  };
+
+                  return qcom_scm_call_noretry(__scm->dev, &desc, NULL);
+          }
+          EXPORT_SYMBOL(qcom_scm_config_set_ice_key);
+
+          int qcom_scm_clear_ice_key(uint32_t index, unsigned int ce)
+          {
+                  struct qcom_scm_desc desc = {
+                          .svc = QCOM_SCM_SVC_ES,
+                          .cmd = QCOM_SCM_ES_CLEAR_ICE_KEY,
+                          .owner = ARM_SMCCC_OWNER_SIP,
+                          .args[0] = index,
+                          .args[1] = ce,
+                          .arginfo = QCOM_SCM_ARGS(2),
+                  };
+
+                  return qcom_scm_call_noretry(__scm->dev, &desc, NULL);
+          }
+          EXPORT_SYMBOL(qcom_scm_clear_ice_key);
+
+          int qcom_scm_derive_raw_secret(phys_addr_t paddr_key, size_t size_key,
+                          phys_addr_t paddr_secret, size_t size_secret)
+          {
+                  struct qcom_scm_desc desc = {
+                          .svc = QCOM_SCM_SVC_ES,
+                          .cmd = QCOM_SCM_ES_DERIVE_RAW_SECRET,
+                          .owner = ARM_SMCCC_OWNER_SIP
+                  };
+
+                  desc.args[0] = paddr_key;
+                  desc.args[1] = size_key;
+                  desc.args[2] = paddr_secret;
+                  desc.args[3] = size_secret;
+                  desc.arginfo = QCOM_SCM_ARGS(4, QCOM_SCM_RW, QCOM_SCM_VAL,
+                                                  QCOM_SCM_RW, QCOM_SCM_VAL);
+                  return qcom_scm_call_noretry(__scm->dev, &desc, NULL);
+          }
+          EXPORT_SYMBOL(qcom_scm_derive_raw_secret);
+          SCMEOF
+          # 4) minidump: msm_minidump_log_init() lived in minidump_log.c,
+          #    which we dropped; delete the guarded call.
+          sed -i '/^[[:space:]]*msm_minidump_log_init();$/d' drivers/soc/qcom/msm_minidump.c
+          grep -n 'msm_minidump_log_init' drivers/soc/qcom/msm_minidump.c || echo '  log_init call removed'
+          # 5) shm-bridge wrappers + KP init call: qtee_shmbridge.c (now part
+          #    of qcom-scm.ko) needs qcom_scm_{enable,delete,create}_shm_bridge
+          #    and scm_mem_protection_init_do, which exist only in the 5.15
+          #    qcom_scm.c. 6.6 also renamed qcom_scm_call_noretry() to
+          #    qcom_scm_call_atomic() - provide a compat wrapper. Extract the
+          #    5.15 bodies from the cloned vermeer tree; add missing macros.
+          for macro in QCOM_SCM_SVC_MP QCOM_SCM_MEMP_SHM_BRDIGE_CREATE \
+                       QCOM_SCM_MEMP_SHM_BRIDGE_ENABLE QCOM_SCM_MEMP_SHM_BRIDGE_DELETE \
+                       SCM_SVC_RTIC TZ_HLOS_NOTIFY_CORE_KERNEL_BOOTUP; do
+            if ! grep -q "define $macro[[:space:]]" drivers/firmware/qcom_scm.h drivers/firmware/qcom_scm.c 2>/dev/null; then
+              def=$(grep -rh "define $macro[[:space:]]" ../vermeer/drivers/firmware/ ../vermeer/include/ 2>/dev/null | head -n1)
+              if [ -n "$def" ]; then
+                sed -i "\$ i $def" drivers/firmware/qcom_scm.h
+                echo "  macro added: $def"
+              fi
+            fi
+          done
+          grep -q 'linux/sched.h' drivers/firmware/qcom_scm.c || \
+            sed -i '0,/#include/s//#include <linux\/sched.h>\n#include/' drivers/firmware/qcom_scm.c
+          if ! grep -q 'int qcom_scm_call_noretry(' drivers/firmware/qcom_scm.c; then
+            printf 'int qcom_scm_call_noretry(struct device *dev, struct qcom_scm_desc *desc,\n                        struct qcom_scm_res *res)\n{\n        return qcom_scm_call_atomic(dev, desc, res);\n}\nEXPORT_SYMBOL(qcom_scm_call_noretry);\n\n' >> drivers/firmware/qcom_scm.c
+          fi
+          for fname in qcom_scm_enable_shm_bridge qcom_scm_delete_shm_bridge \
+                       qcom_scm_create_shm_bridge; do
+            if ! grep -q "$fname(" drivers/firmware/qcom_scm.c; then
+              awk -v fname="$fname" '
+                $0 ~ "^[a-zA-Z_].*[^a-zA-Z0-9_]" fname "\\(" { inf=1 }
+                inf { print }
+                inf && /^}/ { seen=1; next }
+                inf && seen && /^EXPORT_SYMBOL/ { print ""; exit }
+                inf && seen && NF { exit }
+              ' ../vermeer/drivers/firmware/qcom_scm.c >> drivers/firmware/qcom_scm.c
+              echo "  $fname refs in qcom_scm.c now: $(grep -c "$fname" drivers/firmware/qcom_scm.c)"
+            fi
+          done
+          # scm_mem_protection_init_do: awk extraction overran (the 5.15
+          # function body has no clean terminator pattern); hand-write the
+          # equivalent - it is only a KP bootup milestone SCM call whose
+          # result qtee_shmbridge treats as a boolean.
+          if ! grep -q 'scm_mem_protection_init_do(' drivers/firmware/qcom_scm.c; then
+            printf 'int scm_mem_protection_init_do(void)\n{\n        struct qcom_scm_desc desc = {\n                .svc = SCM_SVC_RTIC,\n                .cmd = TZ_HLOS_NOTIFY_CORE_KERNEL_BOOTUP,\n                .owner = ARM_SMCCC_OWNER_SIP,\n                .arginfo = QCOM_SCM_ARGS(2),\n        };\n        struct qcom_scm_res res;\n\n        if (!__scm) {\n                pr_err("SCM dev is not initialized\\n");\n                return -1;\n        }\n        desc.args[0] = offsetof(struct task_struct, pid);\n        desc.args[1] = offsetof(struct task_struct, comm);\n        return qcom_scm_call(__scm->dev, &desc, &res);\n}\n\n' >> drivers/firmware/qcom_scm.c
+          fi
+
+      - name: Add LOCAL_BUILD.md
+        run: |
+          cd "$GITHUB_WORKSPACE/kernel"
+          git fetch origin linux-6.6-port --depth 1
+          git show FETCH_HEAD:LOCAL_BUILD.md > LOCAL_BUILD.md
+          echo "LOCAL_BUILD.md dropped in"
+
+      - name: Commit and push imported tree
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE/kernel"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+            exit 0
+          fi
+          git commit -m "Import full kernel source tree for ${{ inputs.target }} [skip ci]
+
+          Imported by import-source.yml so the branch is self-contained and
+          locally buildable (see LOCAL_BUILD.md). Patches from the branch
+          build workflow are pre-applied."
+          git push origin "${{ inputs.target }}"
