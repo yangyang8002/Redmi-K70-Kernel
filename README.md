@@ -1,10 +1,10 @@
 # 红米 K70（vermeer）官方内核 · GitHub Actions 自动编译
 
-[![Build Redmi K70 Kernel](https://github.com/yangyang8002/redmi-k70-kernel/actions/workflows/build-kernel.yml/badge.svg)](https://github.com/yangyang8002/redmi-k70-kernel/actions/workflows/build-kernel.yml)
+[![Build Redmi K70 Kernel](https://github.com/yangyang8002/Redmi-K70-Kernel/actions/workflows/build-kernel.yml/badge.svg)](https://github.com/yangyang8002/Redmi-K70-Kernel/actions/workflows/build-kernel.yml)
 
 > ## ⚠️ 实验性 linux-6.6 分支（`linux-6.6`）
 >
-> **[<img src="https://github.com/yangyang8002/redmi-k70-kernel/actions/workflows/build-kernel-6.6.yml/badge.svg?branch=linux-6.6" alt="Build 6.6" height="20">](https://github.com/yangyang8002/redmi-k70-kernel/actions/workflows/build-kernel-6.6.yml)**（[工作流](.github/workflows/build-kernel-6.6.yml)）
+> **[<img src="https://github.com/yangyang8002/Redmi-K70-Kernel/actions/workflows/build-kernel-6.6.yml/badge.svg?branch=linux-6.6" alt="Build 6.6" height="20">](https://github.com/yangyang8002/Redmi-K70-Kernel/actions/workflows/build-kernel-6.6.yml)**（[工作流](.github/workflows/build-kernel-6.6.yml)）
 >
 > ### ⛔ 不可用于日用 / 不要刷入真机
 >
@@ -96,21 +96,33 @@ GitHub 免费单任务上限 6 小时，完整 `Image + modules` 构建在 4 核
 
 `linux-6.6-port` 分支在 AOSP GKI android15-6.6（6.6.143）之上移植了 MiCode vermeer 5.15 开源厂商驱动栈，CI 全绿（build-kernel-6.6-port.yml）。
 
-> **诚实声明：编译通过 ≠ 可以开机**。SM8550（8 Gen 3）整机厂驱动栈迁到 6.6 属无先例操作；运行时正确性（能否开机、各外设是否工作）**只能在真机上验证**，CI 无法保证。刷入风险自负，务必备份 boot/init_boot/vendor_boot 原厂镜像。
+> **诚实声明：编译通过 ≠ 可以开机**。SM8550（骁龙 8 Gen 2，kalama）整机厂驱动栈迁到 6.6 属无先例操作；运行时正确性（能否开机、各外设是否工作）**只能在真机上验证**，CI 无法保证。刷入风险自负，务必备份 boot/init_boot/vendor_boot 原厂镜像。
 
 **移植架构**：msm DRM/摄像头媒体栈整目录替换；soc/clk/pinctrl/interconnect 等以 5.15 版覆盖 6.6 同名文件（仅当 6.6 无同名文件时）；Kconfig/Makefile 自动合并 5.15 定义块；编译期 API 漂移逐个适配（class_create、ww_mutex、iommu domain ops、qcom_icc_node、android_debug_symbol 等约 40 处）。
 
-**官方模块清单覆盖：45/108**（另有 ufs_qcom 等以 6.6 上游横线文件名构建，名单按 basename 严格匹配会误判为 missing）。已构建的关键栈：
+**官方模块清单覆盖：49/108**（另有 ufs_qcom 等以 6.6 上游横线文件名构建，名单按 basename 严格匹配会误判为 missing）。已构建的关键栈：
 
 - **FBE 全盘加密链**：hwkm.ko + crypto-qti-hwkm.ko + crypto-qti-common.ko + tmecom-intf.ko + qcom-scm.ko（含 qtee_shmbridge + 移植的 qcom_scm ES v2 调用）——userdata 加密挂载所需
 - **存储**：ufs-qcom.ko + qcom_ice.ko + phy-qcom-ufs-qmp-v4-kalama.ko + sdhci-msm.ko + cqhci.ko
 - **SoC 基础**：pinctrl-kalama、pinctrl-msm、clk-rpmh、icc-rpmh、qcom_rpmh、smem、socinfo、cmd-db、qcom_ipcc、qcom_aoss、qcom-pdc
 - **调试/可靠性**：minidump.ko（core）、debug_symbol、qcom_logbuf_vh、dcc_v2、iommu-logger、arm_smmu
 - **上游替代 5.15 私有驱动**：gcc/dispcc/videocc/gpucc-sm8550（时钟）、interconnect-qcom-sm8550（总线）、qcom-tsens（温度）、qcom-wdt（看门狗）
+- **安全/内存缓冲**：secure_buffer.ko、qcom_wdt_core.ko、memory_dump_v2.ko、mem_buf.ko、mem_buf_dev.ko（qcom_scm_assign_mem_regions 等 3 个 SCM 函数从 5.15 移植）
+
+### 相机路线（进行中）
+
+QTI 相机内核栈（cam_req_mgr/cam_isp/...）在所有公开源树中均被剥离（MiCode vermeer/fuxi、OnePlusOSS sm8550 均无），stock 系统的 camera.ko（vendor_dlkm 分区，5.15 ABI）无法在 6.6 加载。**唯一可行路线是上游 camss + libcamera**（AOSP 风格拍照，非 MIUI 相机）：
+
+- **camss v6.15 全目录 backport**（SM8550 Titan 780 ISP：camss-csid-780、camss-vfe-780、csiphy-3ph-1-0）——6.6 原生 camss 只注册到 sm8250
+- **camcc-sm8550**（相机时钟控制器，从 v6.8 backport）
+- **ov50e.c 传感器驱动**（新写）：主摄 OV50E（OVX8000），寄存器表来自摩托罗拉官方 GPL 内核树（mot_aion），chip id 0x5045、I2C 0x10、C-PHY 3-trio，含 8192x6144@20 / 4096x3072@30 / 2048x1536@120 模式
+- **vermeer-camss-test.dts**：手写相机 DT（stock DTB 的相机节点被小米剥离，已从官方 HyperOS 3 线刷包验证）；camcc/cci0/camss 平台节点取自上游 sm8550.dtsi
+- 相机硬件情报（从官方包 odm/vendor_dlkm 分区提取）：主摄 OV50E 双供、超广 IMX355（6.6 上游有现成驱动）、前摄 OV16A1Q/GC16B3、微距 GC02M1；电源轨 cam_vio=1.8V / cam_vdig=1.1V / cam_vana=2.8V
+- **运行时未经真机验证**：传感器实际 CCI 通道/CSIPHY 通道/reset GPIO/PMIC LDO 映射需真机 dmesg 确认
 
 **已知接受的损失**（官方清单内但放弃移植）：
 
-- 显示/相机/GPU(kgsl)/WiFi 闭源相关约 40 个：OSS 源码被小米剥离，5.15 时代就编不出，与 6.6 无关
+- 显示/GPU(kgsl)/WiFi 闭源相关约 40 个：OSS 源码被小米剥离，5.15 时代就编不出，与 6.6 无关（**相机除外**——已走上游 camss 修复路线，见上节）
 - `sched-walt`：WALT 调度器深度依赖 5.15 的 cfs_rq 内部结构，6.6 调度器重构后无法缝合（退回上游 EAS）
 - `qcom_iommu_util`：5.15 fast-pgtable IOMMU 加速器，移植需整体替换 6.6 IOMMU 核心且会破坏已可用的 arm-smmu
 - `mem-hooks`/`mem-offline`/`minidump_log`/`QCOM_MINIDUMP_PANIC_DUMP`：依赖 6.6 已移除的 mm/kallsyms 内部接口

@@ -30,7 +30,7 @@ on:
     branches: [ linux-6.6 ]
 
 concurrency:
-  group: build-redmi-k70-kernel-66-${{ github.ref }}
+  group: build-Redmi-K70-Kernel-66-${{ github.ref }}
   cancel-in-progress: true
 
 env:

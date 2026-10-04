@@ -30,8 +30,8 @@
 	cam_vdig_1p1: regulator-cam-vdig {
 		compatible = "regulator-fixed";
 		regulator-name = "cam_vdig";
-		regulator-min-microvolt = <1100000>;
-		regulator-max-microvolt = <1100000>;
+		regulator-min-microvolt = <1104000>;
+		regulator-max-microvolt = <1104000>;
 		regulator-always-on;
 	};
 
@@ -75,6 +75,10 @@
 
 			clocks = <&camcc CAM_CC_MCLK0_CLK>;
 			clock-names = "xclk";
+			/* vermeer dtbo: clock-rates = <19200000>; reset via gpio102,
+			   gpio118 = custom (lens/ois power) - see overlay gpios tbl */
+			assigned-clock-rates = <19200000>;
+			reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
 
 			avdd-supply = <&cam_vana_2p8>;
 			dovdd-supply = <&cam_vio_1p8>;
@@ -84,7 +88,7 @@
 
 			port {
 				ov50e_ep: endpoint {
-					remote-endpoint = <&csiphy0_ep>;
+					remote-endpoint = <&csiphy5_ep>;
 					data-lanes = <0 1 2>;
 				};
 			};
@@ -421,4 +425,5 @@
 					drive-strength = <2>;
 					bias-pull-down;
 				};
+			};
 };

@@ -5,8 +5,10 @@
  * GPL-2.0 mot_aion OV50E kernel driver (MotorolaMobilityLLC/kernel-mtk);
  * chip id / i2c address cross-checked against Ameba's ov50e40 driver.
  *
- * vermeer (Redmi K70) wiring: CCI master 0, 7-bit i2c addr 0x10,
- * xclk 24 MHz, AVDD 2.8V / DOVDD 1.8V / DVDD 1.1V, C-PHY 3-trio.
+ * vermeer (Redmi K70) wiring (from stock dtbo vermeer overlay): CCI
+ * master 0, 7-bit i2c addr 0x10, xclk 19.2 MHz (bi_tcxo_div2),
+ * CSIPHY5, reset gpio via TLMM, AVDD 2.8V / DOVDD 1.8V / DVDD 1.104V,
+ * C-PHY 3-trio, module mounted yaw-180deg.
  */
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -21,7 +23,7 @@
 #include <media/v4l2-fwnode.h>
 #include <media/v4l2-subdev.h>
 
-#define OV50E_XCLK_FREQ		24000000
+#define OV50E_XCLK_FREQ		19200000	/* vermeer dtbo: clock-rates = <0x124f800> */
 #define OV50E_CHIP_ID		0x5045
 
 #define OV50E_REG_CHIP_ID_H	0x300b
@@ -5545,7 +5547,7 @@ static int ov50e_get_fmt(struct v4l2_subdev *sd,
 	struct ov50e *ov50e = to_ov50e(sd);
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY)
-		fmt->format = *v4l2_subdev_state_get_format(state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, state, fmt->pad);
 	else
 		ov50e_update_pad_format(ov50e, ov50e->cur_mode, &fmt->format);
 
@@ -5574,7 +5576,7 @@ static int ov50e_set_fmt(struct v4l2_subdev *sd,
 	ov50e_update_pad_format(ov50e, mode, &fmt->format);
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-		*v4l2_subdev_state_get_format(state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, state, fmt->pad) = fmt->format;
 	} else {
 		ov50e->cur_mode = mode;
 		__v4l2_ctrl_modify_range(ov50e->vblank, mode->vts_def - mode->height,

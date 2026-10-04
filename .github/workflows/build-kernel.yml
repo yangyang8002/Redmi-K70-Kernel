@@ -35,7 +35,7 @@ on:
     branches: [ main ]
 
 concurrency:
-  group: build-redmi-k70-kernel-${{ github.ref }}
+  group: build-Redmi-K70-Kernel-${{ github.ref }}
   cancel-in-progress: true
 
 env:
