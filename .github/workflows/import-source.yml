@@ -153,11 +153,10 @@ jobs:
         run: |
           set -eo pipefail
           cd "$GITHUB_WORKSPACE/kernel"
-          if [ ! -d KernelSU/kernel ]; then
-            curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-          else
-            echo "KernelSU already integrated (re-import) - skipping setup.sh"
-          fi
+          # Force a clean re-clone: checkout of a gitlink may leave an empty
+          # KernelSU/ dir which makes setup.sh skip its own clone silently.
+          rm -rf KernelSU
+          curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
           (cd KernelSU && git log -1 --format='SukiSU-Ultra builtin: %h %s' 2>/dev/null) || echo "KernelSU present (content committed, no .git)"
           cd "$GITHUB_WORKSPACE"
           rm -rf susfs4ksu
@@ -198,11 +197,10 @@ jobs:
         run: |
           set -eo pipefail
           cd "$GITHUB_WORKSPACE/kernel"
-          if [ ! -d KernelSU/kernel ]; then
-            curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-          else
-            echo "KernelSU already integrated (re-import) - skipping setup.sh"
-          fi
+          # Force a clean re-clone: checkout of a gitlink may leave an empty
+          # KernelSU/ dir which makes setup.sh skip its own clone silently.
+          rm -rf KernelSU
+          curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
           (cd KernelSU && git log -1 --format='SukiSU-Ultra builtin: %h %s' 2>/dev/null) || echo "KernelSU present (content committed, no .git)"
           cd "$GITHUB_WORKSPACE"
           rm -rf susfs4ksu
@@ -646,6 +644,42 @@ jobs:
             printf 'int scm_mem_protection_init_do(void)\n{\n        struct qcom_scm_desc desc = {\n                .svc = SCM_SVC_RTIC,\n                .cmd = TZ_HLOS_NOTIFY_CORE_KERNEL_BOOTUP,\n                .owner = ARM_SMCCC_OWNER_SIP,\n                .arginfo = QCOM_SCM_ARGS(2),\n        };\n        struct qcom_scm_res res;\n\n        if (!__scm) {\n                pr_err("SCM dev is not initialized\\n");\n                return -1;\n        }\n        desc.args[0] = offsetof(struct task_struct, pid);\n        desc.args[1] = offsetof(struct task_struct, comm);\n        return qcom_scm_call(__scm->dev, &desc, &res);\n}\n\n' >> drivers/firmware/qcom_scm.c
           fi
 
+          # 6) secure-buffer chain: secure_buffer.ko, qcom_wdt_core.ko and
+          # memory_dump_v2.ko (all official) need qcom_scm_assign_mem_regions /
+          # sec_wdog_deactivate / assign_dump_table_region. Extract them (plus
+          # the __qcom_scm_assign_mem helper and the two structs they use)
+          # from the 5.15 tree, then re-enable the three modules.
+          for macro in QCOM_SCM_BOOT_SEC_WDOG_DIS QCOM_SCM_UTIL_DUMP_TABLE_ASSIGN \
+                       QCOM_SCM_SVC_BOOT QCOM_SCM_SVC_UTIL; do
+            if ! grep -q "define $macro[[:space:]]" drivers/firmware/qcom_scm.h drivers/firmware/qcom_scm.c 2>/dev/null; then
+              def=$(grep -rh "define $macro[[:space:]]" ../vermeer/drivers/firmware/ ../vermeer/include/ 2>/dev/null | head -n1 || true)
+              if [ -n "$def" ]; then
+                sed -i "\$ i $def" drivers/firmware/qcom_scm.h
+                echo "  macro added: $def"
+              fi
+            fi
+          done
+          if ! grep -q 'struct qcom_scm_mem_map_info {' include/linux/qcom_scm.h; then
+            awk '/^struct qcom_scm_mem_map_info {/,/^};/' ../vermeer/include/linux/qcom_scm.h > /tmp/scmstructs.h 2>/dev/null || true
+            awk '/^struct qcom_scm_current_perm_info {/,/^};/' ../vermeer/include/linux/qcom_scm.h >> /tmp/scmstructs.h 2>/dev/null || true
+            printf '\nextern int qcom_scm_sec_wdog_deactivate(void);\nextern int qcom_scm_assign_dump_table_region(bool is_assign, phys_addr_t addr, size_t size);\nextern int qcom_scm_assign_mem_regions(struct qcom_scm_mem_map_info *mem_regions, size_t mem_regions_sz, u32 *srcvms, size_t src_sz, struct qcom_scm_current_perm_info *newvms, size_t newvms_sz);\n\n' >> /tmp/scmstructs.h
+            sed -i '/^#endif \/\* __QCOM_SCM_H \*\/$/e cat /tmp/scmstructs.h' include/linux/qcom_scm.h
+            grep -c 'qcom_scm_mem_map_info' include/linux/qcom_scm.h
+          fi
+          for fname in __qcom_scm_assign_mem qcom_scm_sec_wdog_deactivate \
+                       qcom_scm_assign_dump_table_region qcom_scm_assign_mem_regions; do
+            if ! grep -q "$fname(" drivers/firmware/qcom_scm.c; then
+              awk -v fname="$fname" '
+                $0 ~ "^[a-zA-Z_].*[^a-zA-Z0-9_]" fname "\\(" { inf=1 }
+                inf { print }
+                inf && /^}/ { seen=1; next }
+                inf && seen && /^EXPORT_SYMBOL/ { print ""; exit }
+                inf && seen && NF { exit }
+              ' ../vermeer/drivers/firmware/qcom_scm.c >> drivers/firmware/qcom_scm.c
+              echo "  $fname refs now: $(grep -c "$fname" drivers/firmware/qcom_scm.c)"
+            fi
+          done
+
       - name: Commit and push imported tree
         run: |
           set -e
@@ -654,9 +688,20 @@ jobs:
           # directories, otherwise 'git add' stores them as empty gitlinks and
           # their content is lost (drivers/kernelsu symlink then dangles).
           find . -mindepth 2 -maxdepth 3 -name .git -print -exec rm -rf {} + 2>/dev/null || true
+          # A path already recorded as a gitlink in the index is a submodule
+          # boundary: 'git add -A' will NOT descend into it. Drop the gitlink
+          # from the index first so the content is committed as real files.
+          for d in KernelSU; do
+            if git ls-files --error-unmatch "$d" >/dev/null 2>&1; then
+              git rm -r --cached --quiet "$d" && echo "dropped gitlink: $d"
+            fi
+          done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
+          # Xiaomi's own .gitignore excludes drivers/misc/hwid/ (the dir is
+          # stripped from the OSS drop), so our stub needs a force-add.
+          git add -f drivers/misc/hwid/hwid.h 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "nothing to commit"
             exit 0
