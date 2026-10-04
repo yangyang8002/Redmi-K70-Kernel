@@ -36,6 +36,12 @@ jobs:
     steps:
       - name: Checkout port scripts
         uses: actions/checkout@v4
+        with:
+          # The branch now CONTAINS the full kernel source tree (imported by
+          # import-source.yml). Checkout to src/ so it can be renamed to
+          # kernel/ - the tree's own top-level kernel/ dir would otherwise
+          # collide with the clone target name below.
+          path: src
 
       - name: Maximize runner disk space
         run: |
@@ -55,17 +61,32 @@ jobs:
             python3 python-is-python3 clang lld llvm
           clang --version | head -n1
 
-      - name: Clone GKI 6.6 + vermeer 5.15 source trees
+      - name: Clone GKI 6.6 + vermeer 5.15 source trees (or reuse in-repo tree)
+        id: srctree
         run: |
           set -e
-          git clone --depth=1 -b "$G66_BRANCH" "$G66_REPO" kernel
-          git clone --depth=1 -b "$V15_BRANCH" "$V15_REPO" vermeer
-          echo "=== GKI 6.6 ==="; git -C kernel log -1 --format='%H %s'
-          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) *=' kernel/Makefile
-          echo "=== vermeer 5.15 ==="; git -C vermeer log -1 --format='%H %s'
-          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) *=' vermeer/Makefile
+          if [ -f src/Makefile ] && [ -d src/drivers ]; then
+            echo "=== branch is self-contained: using the in-repo tree ==="
+            mv src kernel
+            # keep $GITHUB_WORKSPACE/port-6.6 valid for the payload steps
+            ln -sfn kernel/port-6.6 port-6.6
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+            grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) *=' kernel/Makefile
+          else
+            echo "=== branch has no source tree: cloning upstream ==="
+            rm -rf src
+            git clone --depth=1 -b "$G66_BRANCH" "$G66_REPO" kernel
+            git clone --depth=1 -b "$V15_BRANCH" "$V15_REPO" vermeer
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+            echo "=== GKI 6.6 ==="; git -C kernel log -1 --format='%H %s'
+            grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) *=' kernel/Makefile
+            echo "=== vermeer 5.15 ==="; git -C vermeer log -1 --format='%H %s'
+            grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) *=' vermeer/Makefile
+          fi
 
       - name: Copy vermeer vendor driver stack onto GKI 6.6
+        # in-repo tree already carries the applied port; skip re-applying
+        if: steps.srctree.outputs.reused != 'true'
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
@@ -98,6 +119,7 @@ jobs:
           find kernel -name '*.ko' -o -name 'modules.order' | head -n1 >/dev/null || true
 
       - name: Wire vendor Kconfig/Makefile hooks into the 6.6 tree
+        if: steps.srctree.outputs.reused != 'true'
         run: |
           set -e
           cd "$GITHUB_WORKSPACE/kernel"
