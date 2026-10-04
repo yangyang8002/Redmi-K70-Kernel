@@ -81,7 +81,7 @@ jobs:
             changed=0
             : > "$f.tmpfix"
             while IFS= read -r line || [ -n "$line" ]; do
-              if [[ "$line" =~ ^(o|r|or)?source[[:space:]]+"([^"]+)" ]]; then
+              if [[ "$line" =~ ^(o|r|or)?source[[:space:]]+\"([^\"]+)\" ]]; then
                 kind="${BASH_REMATCH[1]}"
                 p="${BASH_REMATCH[2]}"
                 case "$p" in
@@ -635,13 +635,6 @@ jobs:
           if ! grep -q 'scm_mem_protection_init_do(' drivers/firmware/qcom_scm.c; then
             printf 'int scm_mem_protection_init_do(void)\n{\n        struct qcom_scm_desc desc = {\n                .svc = SCM_SVC_RTIC,\n                .cmd = TZ_HLOS_NOTIFY_CORE_KERNEL_BOOTUP,\n                .owner = ARM_SMCCC_OWNER_SIP,\n                .arginfo = QCOM_SCM_ARGS(2),\n        };\n        struct qcom_scm_res res;\n\n        if (!__scm) {\n                pr_err("SCM dev is not initialized\\n");\n                return -1;\n        }\n        desc.args[0] = offsetof(struct task_struct, pid);\n        desc.args[1] = offsetof(struct task_struct, comm);\n        return qcom_scm_call(__scm->dev, &desc, &res);\n}\n\n' >> drivers/firmware/qcom_scm.c
           fi
-
-      - name: Add LOCAL_BUILD.md
-        run: |
-          cd "$GITHUB_WORKSPACE/kernel"
-          git fetch origin linux-6.6-port --depth 1
-          git show FETCH_HEAD:LOCAL_BUILD.md > LOCAL_BUILD.md
-          echo "LOCAL_BUILD.md dropped in"
 
       - name: Commit and push imported tree
         run: |
