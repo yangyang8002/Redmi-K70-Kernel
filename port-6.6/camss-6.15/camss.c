@@ -2545,7 +2545,10 @@ s64 camss_get_link_freq(struct media_entity *entity, unsigned int bpp,
 	if (!sensor_pad)
 		return -ENODEV;
 
-	return v4l2_get_link_freq(sensor_pad, bpp, 2 * lanes);
+	/* 6.6 v4l2_get_link_freq() takes the sensor ctrl_handler (the pad-arg
+	   form only arrived in 6.11). */
+	return v4l2_get_link_freq(media_entity_to_v4l2_subdev(sensor_pad->entity)->ctrl_handler,
+				  bpp, 2 * lanes);
 }
 
 /*
@@ -3360,7 +3363,7 @@ void camss_delete(struct camss *camss)
  *
  * Always returns 0.
  */
-static void camss_remove(struct platform_device *pdev)
+static int camss_remove(struct platform_device *pdev)
 {
 	struct camss *camss = platform_get_drvdata(pdev);
 
@@ -3372,6 +3375,8 @@ static void camss_remove(struct platform_device *pdev)
 		camss_delete(camss);
 
 	camss_genpd_cleanup(camss);
+
+	return 0; /* 6.6 platform_driver.remove returns int (void from 6.11) */
 }
 
 static const struct camss_resources msm8916_resources = {
