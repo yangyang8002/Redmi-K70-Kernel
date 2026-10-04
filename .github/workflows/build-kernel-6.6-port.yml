@@ -533,6 +533,7 @@ jobs:
           KEEP_GOING: ${{ inputs.keep_going && 'true' || 'false' }}
         run: |
           set -o pipefail
+          set -x
           cd "$GITHUB_WORKSPACE/kernel"
           echo "MARK-A cd ok, PWD=$(pwd)"
           bash ./scripts/config --file out/.config -d WERROR; echo "MARK-B werror rc=$?"
