@@ -308,6 +308,13 @@ jobs:
           # const struct device); adapt the 5.15 mem_buf callback.
           sed -i 's/(struct device \*dev, umode_t \*mode)/(const struct device *dev, umode_t *mode)/' drivers/soc/qcom/mem_buf/mem-buf-ids.c
           grep -n 'const struct device \*dev, umode_t' drivers/soc/qcom/mem_buf/mem-buf-ids.c | head -n 2
+          # 6.6 exports dma_buf_* in the DMA_BUF namespace; 5.15 sources never
+          # import it (namespaces did not apply). Append MODULE_IMPORT_NS.
+          for f in drivers/soc/qcom/mem_buf/*.c; do
+            grep -q 'MODULE_IMPORT_NS(DMA_BUF)' "$f" || \
+              printf '\nMODULE_IMPORT_NS(DMA_BUF);\n' >> "$f"
+          done
+          grep -l 'MODULE_IMPORT_NS(DMA_BUF)' drivers/soc/qcom/mem_buf/*.c | wc -l
           # 2) qtee_shmbridge: lives in drivers/firmware/ in 5.15, outside the
           #    rsync set. Copy it and hook it into the qcom-scm composite set
           #    (6.6 uses qcom-scm-y) plus its Kconfig block.

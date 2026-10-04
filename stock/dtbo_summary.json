@@ -1,0 +1,162 @@
+{
+ "0": {
+  "nodes": 1719,
+  "root": "qcom,kalama-mtp|qcom,kalama|qcom,mtp",
+  "hits": 190
+ },
+ "1": {
+  "nodes": 1,
+  "root": "",
+  "hits": 0
+ },
+ "2": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "3": {
+  "nodes": 1547,
+  "root": "qcom,kalama-mtp|qcom,kalama|qcom,mtp",
+  "hits": 120
+ },
+ "4": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "5": {
+  "nodes": 1,
+  "root": "",
+  "hits": 0
+ },
+ "6": {
+  "nodes": 1,
+  "root": "",
+  "hits": 0
+ },
+ "7": {
+  "nodes": 1,
+  "root": "",
+  "hits": 0
+ },
+ "8": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "9": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "10": {
+  "nodes": 1264,
+  "root": "qcom,kalama-atp|qcom,kalama|qcom,atp",
+  "hits": 12
+ },
+ "11": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "12": {
+  "nodes": 400,
+  "root": "qcom,kalama-cdp|qcom,kalama|qcom,cdp",
+  "hits": 12
+ },
+ "13": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "14": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "15": {
+  "nodes": 1274,
+  "root": "qcom,kalama-cdp|qcom,kalama|qcom,cdp",
+  "hits": 12
+ },
+ "16": {
+  "nodes": 665,
+  "root": "qcom,kalama-cdp|qcom,kalama|qcom,cdp",
+  "hits": 12
+ },
+ "17": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "18": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "19": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "20": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "21": {
+  "nodes": 394,
+  "root": "qcom,kalama-cdp|qcom,kalama|qcom,cdp",
+  "hits": 12
+ },
+ "22": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "23": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "24": {
+  "nodes": 1,
+  "root": "",
+  "hits": 0
+ },
+ "25": {
+  "nodes": 1269,
+  "root": "qcom,kalama-mtp|qcom,kalama|qcom,mtp",
+  "hits": 12
+ },
+ "26": {
+  "nodes": 662,
+  "root": "qcom,kalama-mtp|qcom,kalama|qcom,mtp",
+  "hits": 12
+ },
+ "27": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "28": {
+  "nodes": 1309,
+  "root": "qcom,kalama-mtp|qcom,kalama|qcom,mtp",
+  "hits": 55
+ },
+ "29": {
+  "nodes": 0,
+  "root": "",
+  "hits": 0
+ },
+ "30": {
+  "nodes": 1,
+  "root": "",
+  "hits": 0
+ },
+ "31": {
+  "nodes": 421,
+  "root": "qcom,kalama-cdp|qcom,kalama|qcom,cdp",
+  "hits": 12
+ }
+}
