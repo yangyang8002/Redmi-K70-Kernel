@@ -297,6 +297,93 @@ jobs:
           # has no such file. Copy it in.
           mkdir -p drivers/staging/android
           cp ../vermeer/drivers/staging/android/debug_kinfo.h drivers/staging/android/
+          # --- FBE crypto stack wiring (hwkm + crypto-qti-hwkm are official) ---
+          # 1) tmecom Kconfig: the merge dropped 'source' lines, so
+          #    MSM_TMECOM_QMP never existed; re-add the source line.
+          grep -q 'tmecom/Kconfig' drivers/soc/qcom/Kconfig || \
+            echo 'source "drivers/soc/qcom/tmecom/Kconfig"' >> drivers/soc/qcom/Kconfig
+          # 2) qtee_shmbridge: lives in drivers/firmware/ in 5.15, outside the
+          #    rsync set. Copy it and hook it into the qcom-scm composite set
+          #    (6.6 uses qcom-scm-y) plus its Kconfig block.
+          cp ../vermeer/drivers/firmware/qtee_shmbridge.c ../vermeer/drivers/firmware/qtee_shmbridge_internal.h drivers/firmware/
+          grep -q 'qtee_shmbridge' drivers/firmware/Makefile || \
+            echo 'qcom-scm-$(CONFIG_QTEE_SHM_BRIDGE) += qtee_shmbridge.o' >> drivers/firmware/Makefile
+          grep -n 'qcom-scm' drivers/firmware/Makefile | head -n 4
+          grep -q 'config QTEE_SHM_BRIDGE' drivers/firmware/Kconfig || \
+            printf 'config QTEE_SHM_BRIDGE\n\tbool "QTI TEE shared memory bridge"\n\tdepends on QCOM_SCM\n\tdefault y if QCOM_SCM\n\thelp\n\t  QTEE shared memory bridge driver provides kernel APIs to share\n\t  memory between trustzone and other VMs through shared memory bridge.\n\n' >> drivers/firmware/Kconfig
+          # 3) qcom_scm ES v2 calls: crypto-qti-hwkm needs
+          #    config_set_ice_key/clear_ice_key/derive_raw_secret, which only
+          #    exist in the 5.15 qcom_scm.c. Append the macros (missing in
+          #    6.6's local qcom_scm.h), the header decls, and the bodies.
+          grep -q 'QCOM_SCM_ES_DERIVE_RAW_SECRET' drivers/firmware/qcom_scm.h || \
+            sed -i '/#define QCOM_SCM_ES_CONFIG_SET_ICE_KEY/a #define QCOM_SCM_ES_CONFIG_SET_ICE_KEY_V2 0x05\n#define QCOM_SCM_ES_CLEAR_ICE_KEY\t\t0x06\n#define QCOM_SCM_ES_DERIVE_RAW_SECRET\t0x07' drivers/firmware/qcom_scm.h
+          grep -n 'QCOM_SCM_ES' drivers/firmware/qcom_scm.h
+          grep -q 'qcom_scm_derive_raw_secret' include/linux/qcom_scm.h || \
+            sed -i 's|^#endif /\* __QCOM_SCM_H \*/$|extern int qcom_scm_config_set_ice_key(uint32_t index, phys_addr_t paddr, size_t size, uint32_t cipher, unsigned int data_unit, unsigned int ce);\nextern int qcom_scm_clear_ice_key(uint32_t index, unsigned int ce);\nextern int qcom_scm_derive_raw_secret(phys_addr_t paddr_key, size_t size_key, phys_addr_t paddr_secret, size_t size_secret);\n\n#endif /* __QCOM_SCM_H */|' include/linux/qcom_scm.h
+          grep -n 'derive_raw_secret' include/linux/qcom_scm.h
+          grep -q 'qcom_scm_derive_raw_secret' drivers/firmware/qcom_scm.c || cat >> drivers/firmware/qcom_scm.c <<'SCMEOF'
+
+          int qcom_scm_config_set_ice_key(uint32_t index, phys_addr_t paddr, size_t size,
+                                          uint32_t cipher, unsigned int data_unit,
+                                          unsigned int ce)
+          {
+                  struct qcom_scm_desc desc = {
+                          .svc = QCOM_SCM_SVC_ES,
+                          .cmd = QCOM_SCM_ES_CONFIG_SET_ICE_KEY_V2,
+                          .owner = ARM_SMCCC_OWNER_SIP,
+                          .args[0] = index,
+                          .args[1] = paddr,
+                          .args[2] = size,
+                          .args[3] = cipher,
+                          .args[4] = data_unit,
+                          .args[5] = ce,
+                          .arginfo = QCOM_SCM_ARGS(6, QCOM_SCM_VAL, QCOM_SCM_RW,
+                                                  QCOM_SCM_VAL, QCOM_SCM_VAL,
+                                                  QCOM_SCM_VAL, QCOM_SCM_VAL),
+                  };
+
+                  return qcom_scm_call_noretry(__scm->dev, &desc, NULL);
+          }
+          EXPORT_SYMBOL(qcom_scm_config_set_ice_key);
+
+          int qcom_scm_clear_ice_key(uint32_t index, unsigned int ce)
+          {
+                  struct qcom_scm_desc desc = {
+                          .svc = QCOM_SCM_SVC_ES,
+                          .cmd = QCOM_SCM_ES_CLEAR_ICE_KEY,
+                          .owner = ARM_SMCCC_OWNER_SIP,
+                          .args[0] = index,
+                          .args[1] = ce,
+                          .arginfo = QCOM_SCM_ARGS(2),
+                  };
+
+                  return qcom_scm_call_noretry(__scm->dev, &desc, NULL);
+          }
+          EXPORT_SYMBOL(qcom_scm_clear_ice_key);
+
+          int qcom_scm_derive_raw_secret(phys_addr_t paddr_key, size_t size_key,
+                          phys_addr_t paddr_secret, size_t size_secret)
+          {
+                  struct qcom_scm_desc desc = {
+                          .svc = QCOM_SCM_SVC_ES,
+                          .cmd = QCOM_SCM_ES_DERIVE_RAW_SECRET,
+                          .owner = ARM_SMCCC_OWNER_SIP
+                  };
+
+                  desc.args[0] = paddr_key;
+                  desc.args[1] = size_key;
+                  desc.args[2] = paddr_secret;
+                  desc.args[3] = size_secret;
+                  desc.arginfo = QCOM_SCM_ARGS(4, QCOM_SCM_RW, QCOM_SCM_VAL,
+                                                  QCOM_SCM_RW, QCOM_SCM_VAL);
+                  return qcom_scm_call_noretry(__scm->dev, &desc, NULL);
+          }
+          EXPORT_SYMBOL(qcom_scm_derive_raw_secret);
+          SCMEOF
+          # 4) minidump: msm_minidump_log_init() lived in minidump_log.c,
+          #    which we dropped; delete the guarded call.
+          sed -i '/^[[:space:]]*msm_minidump_log_init();$/d' drivers/soc/qcom/msm_minidump.c
+          grep -n 'msm_minidump_log_init' drivers/soc/qcom/msm_minidump.c || echo '  log_init call removed'
 
       - name: Generate .config (gki_defconfig + vermeer fragment)
         run: |
@@ -446,7 +533,7 @@ jobs:
             -d QCOM_SMP2P_SLEEPSTATE -d QSEE_IPC_IRQ_BRIDGE -d QCOM_GLINK \
             -d QCOM_CDSP_RM -d QCOM_SYSMON_SUBSYSTEM_STATS \
             -d QCOM_SUBSYSTEM_SLEEP_STATS -d QCOM_SOC_SLEEP_STATS \
-            -d QCOM_ADSP_SLEEPMON -d MSM_TMECOM_QMP -d QCOM_MICRODUMP \
+            -d QCOM_ADSP_SLEEPMON -d QCOM_MICRODUMP \
             -d MSM_CDSP_LOADER -d QTI_PMIC_PON_LOG -d MSM_BOOT_STATS \
             -d QCOM_RUN_QUEUE_STATS -d USB_BAM -d QCOM_DCVS -d QTI_RIMPS_LOG \
             -d QCOM_RAMDUMP -d QCOM_PANEL_EVENT_NOTIFIER \
