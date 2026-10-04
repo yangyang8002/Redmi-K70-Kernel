@@ -393,7 +393,7 @@ jobs:
           for macro in QCOM_SCM_SVC_MP QCOM_SCM_MEMP_SHM_BRDIGE_CREATE \
                        QCOM_SCM_MEMP_SHM_BRIDGE_ENABLE QCOM_SCM_MEMP_SHM_BRIDGE_DELETE \
                        SCM_SVC_RTIC TZ_HLOS_NOTIFY_CORE_KERNEL_BOOTUP; do
-            if ! grep -rq "define $macro[[:space:]]" drivers/firmware/ 2>/dev/null; then
+            if ! grep -q "define $macro[[:space:]]" drivers/firmware/qcom_scm.h drivers/firmware/qcom_scm.c 2>/dev/null; then
               def=$(grep -rh "define $macro[[:space:]]" ../vermeer/drivers/firmware/ ../vermeer/include/ 2>/dev/null | head -n1)
               if [ -n "$def" ]; then
                 sed -i "\$ i $def" drivers/firmware/qcom_scm.h
@@ -407,7 +407,7 @@ jobs:
             printf 'int qcom_scm_call_noretry(struct device *dev, struct qcom_scm_desc *desc,\n                        struct qcom_scm_res *res)\n{\n        return qcom_scm_call_atomic(dev, desc, res);\n}\nEXPORT_SYMBOL(qcom_scm_call_noretry);\n\n' >> drivers/firmware/qcom_scm.c
           fi
           for fname in qcom_scm_enable_shm_bridge qcom_scm_delete_shm_bridge \
-                       qcom_scm_create_shm_bridge scm_mem_protection_init_do; do
+                       qcom_scm_create_shm_bridge; do
             if ! grep -q "$fname(" drivers/firmware/qcom_scm.c; then
               awk -v fname="$fname" '
                 $0 ~ "^[a-zA-Z_].*[^a-zA-Z0-9_]" fname "\\(" { inf=1 }
@@ -419,6 +419,13 @@ jobs:
               echo "  $fname refs in qcom_scm.c now: $(grep -c "$fname" drivers/firmware/qcom_scm.c)"
             fi
           done
+          # scm_mem_protection_init_do: awk extraction overran (the 5.15
+          # function body has no clean terminator pattern); hand-write the
+          # equivalent - it is only a KP bootup milestone SCM call whose
+          # result qtee_shmbridge treats as a boolean.
+          if ! grep -q 'scm_mem_protection_init_do(' drivers/firmware/qcom_scm.c; then
+            printf 'int scm_mem_protection_init_do(void)\n{\n        struct qcom_scm_desc desc = {\n                .svc = SCM_SVC_RTIC,\n                .cmd = TZ_HLOS_NOTIFY_CORE_KERNEL_BOOTUP,\n                .owner = ARM_SMCCC_OWNER_SIP,\n                .arginfo = QCOM_SCM_ARGS(2),\n        };\n        struct qcom_scm_res res;\n\n        if (!__scm) {\n                pr_err("SCM dev is not initialized\\n");\n                return -1;\n        }\n        desc.args[0] = offsetof(struct task_struct, pid);\n        desc.args[1] = offsetof(struct task_struct, comm);\n        return qcom_scm_call(__scm->dev, &desc, &res);\n}\n\n' >> drivers/firmware/qcom_scm.c
+          fi
 
       - name: Generate .config (gki_defconfig + vermeer fragment)
         run: |
