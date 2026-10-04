@@ -278,6 +278,20 @@ jobs:
           # which is what appends the minidump-y line in the first place.
           sed -i 's/minidump-y[[:space:]]*+= msm_minidump.o minidump_log.o/minidump-y   += msm_minidump.o/' drivers/soc/qcom/Makefile
           grep 'minidump-y' drivers/soc/qcom/Makefile || true
+          # 6.6 upstream already builds qcom_common.o as its own module
+          # (obj-$(CONFIG_QCOM_RPROC_COMMON) += qcom_common.o); the 5.15
+          # rproc_qcom_common-y set lines re-wrap the SAME qcom_common.o
+          # into rproc_qcom_common.ko, exporting every symbol twice at
+          # modpost. Drop the two appended 5.15 lines.
+          sed -i '/^obj-$(CONFIG_QCOM_RPROC_COMMON)[[:space:]]*+= rproc_qcom_common.o$/d; /^rproc_qcom_common-y[[:space:]]*:=/d' drivers/remoteproc/Makefile
+          grep -n 'rproc_qcom_common' drivers/remoteproc/Makefile || echo '  rproc_qcom_common lines removed'
+          # 6.6 upstream already builds qcom_common.o as its own module
+          # (obj-$(CONFIG_QCOM_RPROC_COMMON) += qcom_common.o); the 5.15
+          # rproc_qcom_common-y set lines re-wrap the SAME qcom_common.o
+          # into rproc_qcom_common.ko, exporting every symbol twice at
+          # modpost. Drop the two appended 5.15 lines.
+          sed -i '/^obj-$(CONFIG_QCOM_RPROC_COMMON)[[:space:]]*+= rproc_qcom_common.o$/d; /^rproc_qcom_common-y[[:space:]]*:=/d' drivers/remoteproc/Makefile
+          grep -n 'rproc_qcom_common' drivers/remoteproc/Makefile || echo '  rproc_qcom_common lines removed'
           # debug_symbol.c (official module list member) includes the 5.15
           # drivers/staging/android/debug_kinfo.h via a relative path; 6.6
           # has no such file. Copy it in.
@@ -387,6 +401,16 @@ jobs:
           # other SoCs (not vermeer); they hit the same icc_node rework.
           ./scripts/config --file out/.config -d INTERCONNECT_QCOM_CROW
           ./scripts/config --file out/.config -d INTERCONNECT_QCOM_KAKA
+          # modpost: these 5.15 modules (none on the official list) reference
+          # 5.15-private symbols (qcom_scm_assign_mem_regions,
+          # qtee_shmbridge_*, subsystem_sleep_debug_enable,
+          # register_trace_android_rvh_do_undefinstr/..._do_ptrauth_fault)
+          # that do not exist in the 6.6 tree. Disable them.
+          ./scripts/config --file out/.config -d QCOM_SECURE_BUFFER
+          ./scripts/config --file out/.config -d QCOM_WDT_CORE
+          ./scripts/config --file out/.config -d QCOM_MEMORY_DUMP_V2
+          ./scripts/config --file out/.config -d QTI_SYS_PM_VX
+          ./scripts/config --file out/.config -d QCOM_CPU_VENDOR_HOOKS
           # The 5.15 mem-hooks/mem-offline drivers depend on Qualcomm's
           # private 5.15 MM internals (mkswapd array, MAX_KSWAPD_THREADS)
           # that do not exist in 6.6 MM: skip them.
