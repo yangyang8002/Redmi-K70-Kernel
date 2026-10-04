@@ -457,7 +457,7 @@ jobs:
                        QCOM_SCM_MEMP_SHM_BRIDGE_ENABLE QCOM_SCM_MEMP_SHM_BRIDGE_DELETE \
                        SCM_SVC_RTIC TZ_HLOS_NOTIFY_CORE_KERNEL_BOOTUP; do
             if ! grep -q "define $macro[[:space:]]" drivers/firmware/qcom_scm.h drivers/firmware/qcom_scm.c 2>/dev/null; then
-              def=$(grep -rh "define $macro[[:space:]]" ../vermeer/drivers/firmware/ ../vermeer/include/ 2>/dev/null | head -n1)
+              def=$(grep -rh "define $macro[[:space:]]" ../vermeer/drivers/firmware/ ../vermeer/include/ 2>/dev/null | head -n1 || true)
               if [ -n "$def" ]; then
                 sed -i "\$ i $def" drivers/firmware/qcom_scm.h
                 echo "  macro added: $def"
@@ -647,6 +647,9 @@ jobs:
             -d SHOW_SUSPEND_EPOCH -d GH_TLMM_VM_MEM_ACCESS -d SPS \
             -d MSM_PERFORMANCE -d QCOM_VA_MINIDUMP -d MSM_QBT_HANDLER \
             -d QCOM_HUNG_TASK_ENH
+          if [ ! -d ../vermeer ]; then
+            echo "=== no ../vermeer (in-repo tree): SCM backport already applied, skipping ==="
+          fi
           # 6) secure-buffer chain: secure_buffer.ko, qcom_wdt_core.ko and
           # memory_dump_v2.ko (all official) need qcom_scm_assign_mem_regions /
           # sec_wdog_deactivate / assign_dump_table_region. Extract them (plus
@@ -655,7 +658,7 @@ jobs:
           for macro in QCOM_SCM_BOOT_SEC_WDOG_DIS QCOM_SCM_UTIL_DUMP_TABLE_ASSIGN \
                        QCOM_SCM_SVC_BOOT QCOM_SCM_SVC_UTIL; do
             if ! grep -q "define $macro[[:space:]]" drivers/firmware/qcom_scm.h drivers/firmware/qcom_scm.c 2>/dev/null; then
-              def=$(grep -rh "define $macro[[:space:]]" ../vermeer/drivers/firmware/ ../vermeer/include/ 2>/dev/null | head -n1)
+              def=$(grep -rh "define $macro[[:space:]]" ../vermeer/drivers/firmware/ ../vermeer/include/ 2>/dev/null | head -n1 || true)
               if [ -n "$def" ]; then
                 sed -i "\$ i $def" drivers/firmware/qcom_scm.h
                 echo "  macro added: $def"
@@ -663,8 +666,8 @@ jobs:
             fi
           done
           if ! grep -q 'struct qcom_scm_mem_map_info {' include/linux/qcom_scm.h; then
-            awk '/^struct qcom_scm_mem_map_info {/,/^};/' ../vermeer/include/linux/qcom_scm.h > /tmp/scmstructs.h
-            awk '/^struct qcom_scm_current_perm_info {/,/^};/' ../vermeer/include/linux/qcom_scm.h >> /tmp/scmstructs.h
+            awk '/^struct qcom_scm_mem_map_info {/,/^};/' ../vermeer/include/linux/qcom_scm.h > /tmp/scmstructs.h 2>/dev/null || true
+            awk '/^struct qcom_scm_current_perm_info {/,/^};/' ../vermeer/include/linux/qcom_scm.h >> /tmp/scmstructs.h 2>/dev/null || true
             printf '\nextern int qcom_scm_sec_wdog_deactivate(void);\nextern int qcom_scm_assign_dump_table_region(bool is_assign, phys_addr_t addr, size_t size);\nextern int qcom_scm_assign_mem_regions(struct qcom_scm_mem_map_info *mem_regions, size_t mem_regions_sz, u32 *srcvms, size_t src_sz, struct qcom_scm_current_perm_info *newvms, size_t newvms_sz);\n\n' >> /tmp/scmstructs.h
             sed -i '/^#endif \/\* __QCOM_SCM_H \*\/$/e cat /tmp/scmstructs.h' include/linux/qcom_scm.h
             grep -c 'qcom_scm_mem_map_info' include/linux/qcom_scm.h
