@@ -373,6 +373,10 @@ jobs:
           # already-working 6.6 arm-smmu. Base mapping is provided by
           # arm-smmu; disable the accelerator and document the loss.
           ./scripts/config --file out/.config -d QCOM_IOMMU_UTIL
+          # qcom_esoc (external-modem framework) is not on vermeer's official
+          # module list and its mdm-pon members need 5.15-private headers;
+          # SM8550 has no external MDM modem. Disable.
+          ./scripts/config --file out/.config -d QCOM_ESOC
           # The 5.15 mem-hooks/mem-offline drivers depend on Qualcomm's
           # private 5.15 MM internals (mkswapd array, MAX_KSWAPD_THREADS)
           # that do not exist in 6.6 MM: skip them.
