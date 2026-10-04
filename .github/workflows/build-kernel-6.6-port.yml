@@ -304,6 +304,10 @@ jobs:
             echo 'source "drivers/soc/qcom/tmecom/Kconfig"' >> drivers/soc/qcom/Kconfig
           grep -q 'mem_buf/Kconfig' drivers/soc/qcom/Kconfig || \
             echo 'source "drivers/soc/qcom/mem_buf/Kconfig"' >> drivers/soc/qcom/Kconfig
+          # 6.6 const-qualified the class devnode callback (struct device ->
+          # const struct device); adapt the 5.15 mem_buf callback.
+          sed -i 's/(struct device \*dev, umode_t \*mode)/(const struct device *dev, umode_t *mode)/' drivers/soc/qcom/mem_buf/mem-buf-ids.c
+          grep -n 'const struct device \*dev, umode_t' drivers/soc/qcom/mem_buf/mem-buf-ids.c | head -n 2
           # 2) qtee_shmbridge: lives in drivers/firmware/ in 5.15, outside the
           #    rsync set. Copy it and hook it into the qcom-scm composite set
           #    (6.6 uses qcom-scm-y) plus its Kconfig block.
