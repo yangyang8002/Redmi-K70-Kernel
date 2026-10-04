@@ -330,6 +330,14 @@ jobs:
             printf 'config SM_CAMCC_8550\n\ttristate "SM8550 Camera Clock Controller"\n\tdepends on ARM64 || COMPILE_TEST\n\tselect SM_GCC_8550\n\thelp\n\t  Camera clock controller for SM8550.\n' >> drivers/clk/qcom/Kconfig
           fi
           grep -c 'camss-csid-780\|camss-vfe-780' drivers/media/platform/qcom/camss/Makefile
+          # 1c) OV50E (OVX8000) main-sensor driver: new V4L2 subdev written
+          #    from Motorola's GPL OV50E kernel driver register tables
+          #    (chip id 0x5045, i2c 0x10, xclk 24MHz, avdd/dovdd/dvdd).
+          cp "$GITHUB_WORKSPACE/port-6.6/ov50e.c" drivers/media/i2c/
+          grep -q 'ov50e' drivers/media/i2c/Makefile ||             echo 'obj-$(CONFIG_VIDEO_OV50E) += ov50e.o' >> drivers/media/i2c/Makefile
+          if ! grep -q 'config VIDEO_OV50E' drivers/media/i2c/Kconfig; then
+            printf 'config VIDEO_OV50E\n\ttristate "OmniVision OV50E sensor support"\n\tdepends on I2C && VIDEO_DEV\n\tselect MEDIA_CONTROLLER\n\tselect VIDEO_V4L2_SUBDEV_API\n\tselect V4L2_FWNODE\n\thelp\n\t  OmniVision OV50E 50MP sensor (Redmi K70 main camera).\n' >> drivers/media/i2c/Kconfig
+          fi
           # 2) qtee_shmbridge: lives in drivers/firmware/ in 5.15, outside the
           #    rsync set. Copy it and hook it into the qcom-scm composite set
           #    (6.6 uses qcom-scm-y) plus its Kconfig block.
@@ -654,7 +662,7 @@ jobs:
           # csiphy-3ph). QTI camera-kernel is closed everywhere (verified:
           # MiCode vermeer/fuxi, OnePlusOSS sm8550 all lack it), so camss +
           # libcamera is the only route. cci = camera I2C master.
-          ./scripts/config --file out/.config -m VIDEO_QCOM_CAMSS -m I2C_QCOM_CCI -m SM_CAMCC_8550
+          ./scripts/config --file out/.config -m VIDEO_QCOM_CAMSS -m I2C_QCOM_CCI -m SM_CAMCC_8550 -m VIDEO_OV50E
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           KFLAG=""
           [ "$KEEP_GOING" = "true" ] && KFLAG="-k"
