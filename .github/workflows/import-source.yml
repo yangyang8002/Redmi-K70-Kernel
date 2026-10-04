@@ -153,9 +153,14 @@ jobs:
         run: |
           set -eo pipefail
           cd "$GITHUB_WORKSPACE/kernel"
-          curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-          (cd KernelSU && git log -1 --format='SukiSU-Ultra builtin: %h %s')
+          if [ ! -d KernelSU/kernel ]; then
+            curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+          else
+            echo "KernelSU already integrated (re-import) - skipping setup.sh"
+          fi
+          (cd KernelSU && git log -1 --format='SukiSU-Ultra builtin: %h %s' 2>/dev/null) || echo "KernelSU present (content committed, no .git)"
           cd "$GITHUB_WORKSPACE"
+          rm -rf susfs4ksu
           git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "gki-android13-5.15"
           cd kernel
           cp "../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch" .
@@ -193,9 +198,14 @@ jobs:
         run: |
           set -eo pipefail
           cd "$GITHUB_WORKSPACE/kernel"
-          curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-          (cd KernelSU && git log -1 --format='SukiSU-Ultra builtin: %h %s')
+          if [ ! -d KernelSU/kernel ]; then
+            curl -LSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+          else
+            echo "KernelSU already integrated (re-import) - skipping setup.sh"
+          fi
+          (cd KernelSU && git log -1 --format='SukiSU-Ultra builtin: %h %s' 2>/dev/null) || echo "KernelSU present (content committed, no .git)"
           cd "$GITHUB_WORKSPACE"
+          rm -rf susfs4ksu
           git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "gki-android15-6.6"
           cd kernel
           cp "../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch" .
@@ -640,6 +650,10 @@ jobs:
         run: |
           set -e
           cd "$GITHUB_WORKSPACE/kernel"
+          # Embedded repos (e.g. KernelSU cloned by setup.sh) must become plain
+          # directories, otherwise 'git add' stores them as empty gitlinks and
+          # their content is lost (drivers/kernelsu symlink then dangles).
+          find . -mindepth 2 -maxdepth 3 -name .git -print -exec rm -rf {} + 2>/dev/null || true
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
