@@ -257,12 +257,16 @@ jobs:
                 # 5.15 common.h; skip it (6.6 has no dummy-clock concept).
                 obj-*clk-dummy.o*) ;;
                 obj-*) grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
-                # composite-module object set definitions (name-y/objs/name-$(CONFIG...)):
-                # copy only if that set name is NOT already defined in the 6.6 Makefile.
-                *-y[[:space:]]*:=*|*-y[[:space:]]*+=*|*-objs[[:space:]]*:=*|*-objs[[:space:]]*+=*|*-\$\(CONFIG_*))
-                  sname=$(printf '%s' "$line" | sed -E 's/^([a-zA-Z0-9_-]+)-.*/\1/')
-                  grep -qx "$sname" /tmp/g66sets.txt && continue
-                  grep -qF "$line" "$g66m" || { echo "$line" >> "$g66m"; added=$((added+1)); } ;;
+                # composite-module object set definitions (name-y / name-objs /
+                # name-$(CONFIG...)): copy only if that set name is NOT already
+                # defined as a set in the 6.6 Makefile.
+                *)
+                  if printf '%s' "$line" | grep -qE '^[a-zA-Z0-9_-]+-(y|objs|\$\(CONFIG_[A-Z0-9_]+\))[[:space:]]*[:+]?='; then
+                    sname=$(printf '%s' "$line" | sed -E 's/^([a-zA-Z0-9_-]+)-.*/\1/')
+                    if ! grep -qx "$sname" /tmp/g66sets.txt && ! grep -qF "$line" "$g66m"; then
+                      echo "$line" >> "$g66m"; added=$((added+1))
+                    fi
+                  fi ;;
               esac
             done < "$v15m"
             echo "  $pair/Makefile: +$added obj lines"
