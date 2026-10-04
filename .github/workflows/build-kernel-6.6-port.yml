@@ -315,6 +315,21 @@ jobs:
               printf '\nMODULE_IMPORT_NS(DMA_BUF);\n' >> "$f"
           done
           grep -l 'MODULE_IMPORT_NS(DMA_BUF)' drivers/soc/qcom/mem_buf/*.c | wc -l
+          # 1b) Camera phase 1: backport the whole camss subsystem from v6.15
+          #    (SM8550 Titan 780: camss.c sm8550 resources, camss-csid-780,
+          #    camss-vfe-780, updated csiphy-3ph, camss-format helper) and
+          #    camcc-sm8550.c from v6.8. 6.6's camss registers only up to
+          #    sm8250; the v6.15 sources use no streams-API so they should
+          #    build against the 6.6 V4L2 core. Payload lives in the repo
+          #    under port-6.6/ (33 camss files + camcc + dt-bindings header).
+          rsync -a "$GITHUB_WORKSPACE/port-6.6/camss-6.15/" drivers/media/platform/qcom/camss/
+          cp "$GITHUB_WORKSPACE/port-6.6/camcc-sm8550.c" drivers/clk/qcom/
+          cp "$GITHUB_WORKSPACE/port-6.6/qcom,sm8550-camcc.h" include/dt-bindings/clock/
+          grep -q 'camcc-sm8550' drivers/clk/qcom/Makefile ||             echo 'obj-$(CONFIG_SM_CAMCC_8550) += camcc-sm8550.o' >> drivers/clk/qcom/Makefile
+          if ! grep -q 'config SM_CAMCC_8550' drivers/clk/qcom/Kconfig; then
+            printf 'config SM_CAMCC_8550\n\ttristate "SM8550 Camera Clock Controller"\n\tdepends on ARM64 || COMPILE_TEST\n\tselect SM_GCC_8550\n\thelp\n\t  Camera clock controller for SM8550.\n' >> drivers/clk/qcom/Kconfig
+          fi
+          grep -c 'camss-csid-780\|camss-vfe-780' drivers/media/platform/qcom/camss/Makefile
           # 2) qtee_shmbridge: lives in drivers/firmware/ in 5.15, outside the
           #    rsync set. Copy it and hook it into the qcom-scm composite set
           #    (6.6 uses qcom-scm-y) plus its Kconfig block.
@@ -639,7 +654,7 @@ jobs:
           # csiphy-3ph). QTI camera-kernel is closed everywhere (verified:
           # MiCode vermeer/fuxi, OnePlusOSS sm8550 all lack it), so camss +
           # libcamera is the only route. cci = camera I2C master.
-          ./scripts/config --file out/.config -m VIDEO_QCOM_CAMSS -m I2C_QCOM_CCI
+          ./scripts/config --file out/.config -m VIDEO_QCOM_CAMSS -m I2C_QCOM_CCI -m SM_CAMCC_8550
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           KFLAG=""
           [ "$KEEP_GOING" = "true" ] && KFLAG="-k"

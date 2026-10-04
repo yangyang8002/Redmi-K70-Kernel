@@ -4,3 +4,4 @@ artifacts/
 aosp-clang/
 build.log
 *.tar.gz
+stock/
