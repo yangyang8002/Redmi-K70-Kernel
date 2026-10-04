@@ -47,6 +47,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
+      - name: Checkout (detect in-repo source tree)
+        uses: actions/checkout@v4
+        with:
+          path: src
+
       - name: Maximize runner disk space
         run: |
           set -e
@@ -66,14 +71,21 @@ jobs:
           clang --version | head -n1
 
       - name: Clone AOSP GKI android15-6.6 baseline
+        id: srctree
         run: |
           set -e
-          git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
-          echo "=== HEAD commit ==="
-          git -C kernel log -1 --format='%H%n%s'
-          echo "=== kernel version ==="
-          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION) *=' kernel/Makefile
-
+          if [ -f src/Makefile ] && [ -d src/drivers ]; then
+            echo "=== branch is self-contained: using the in-repo tree ==="
+            mv src kernel
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "=== no in-repo tree: cloning upstream ==="
+            rm -rf src
+            git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+          fi
+          git -C kernel log -1 --format='%H%n%s' 2>/dev/null || echo "(in-repo tree)"
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) *=' kernel/Makefile
       - name: Fetch vermeer vendor config fragment (5.15 MiCode)
         run: |
           set -e
@@ -82,6 +94,7 @@ jobs:
           wc -l kernel/arch/arm64/configs/vendor/vermeer_GKI.config
 
       - name: Integrate SukiSU-Ultra (builtin/SUSFS branch) + SUSFS patches
+        if: steps.srctree.outputs.reused != 'true'
         run: |
           set -eo pipefail
           # ---- SukiSU-Ultra kernel integration (builtin branch: SUSFS-ready
@@ -130,6 +143,7 @@ jobs:
           wc -l < "$GITHUB_WORKSPACE/modified_files.txt"
 
       - name: Commit tree fixes for a clean vermagic
+        if: steps.srctree.outputs.reused != 'true'
         run: |
           set -e
           cd kernel
