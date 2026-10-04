@@ -676,8 +676,9 @@ jobs:
                KCFLAGS='-Wno-error=implicit-int -Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -Wno-error=int-conversion' \
                Image modules < /dev/null 2>&1 | tee -a build.log || build_failed=1
           # Camera test DTB: build standalone so a dts error never blocks
-          # the kernel build; report but tolerate failure for now.
-          make O=out ARCH=arm64 LLVM=1 qcom/sm8550-vermeer-camss-test.dtb 2>&1 | tail -n 5 || true
+          # the kernel build; keep the full log in diag for inspection.
+          make O=out ARCH=arm64 LLVM=1 qcom/sm8550-vermeer-camss-test.dtb > dtb-build.log 2>&1 || true
+          tail -n 30 dtb-build.log
           ls -lh out/arch/arm64/boot/dts/qcom/sm8550-vermeer-camss-test.dtb 2>/dev/null || echo "NO TEST DTB"
           echo "=== build output ==="
           ls -lh out/arch/arm64/boot/Image 2>/dev/null || echo "NO IMAGE"
@@ -745,5 +746,7 @@ jobs:
           path: |
             kernel/build.log
             kernel/errors-digest.txt
+            kernel/dtb-build.log
             kernel/out/.config
+            kernel/out/arch/arm64/boot/dts/qcom/sm8550-vermeer-camss-test.dtb
           if-no-files-found: warn
