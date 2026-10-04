@@ -702,6 +702,9 @@ jobs:
           # Xiaomi's own .gitignore excludes drivers/misc/hwid/ (the dir is
           # stripped from the OSS drop), so our stub needs a force-add.
           git add -f drivers/misc/hwid/hwid.h 2>/dev/null || true
+          # KernelSU's own .gitignore has a bare 'manager/' rule which also
+          # matches kernel/manager/ (apk_sign.h lives there, ksu.c needs it).
+          git add -f KernelSU/ 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "nothing to commit"
             exit 0
