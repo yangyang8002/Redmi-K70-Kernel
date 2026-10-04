@@ -654,6 +654,14 @@ jobs:
           # directories, otherwise 'git add' stores them as empty gitlinks and
           # their content is lost (drivers/kernelsu symlink then dangles).
           find . -mindepth 2 -maxdepth 3 -name .git -print -exec rm -rf {} + 2>/dev/null || true
+          # A path already recorded as a gitlink in the index is a submodule
+          # boundary: 'git add -A' will NOT descend into it. Drop the gitlink
+          # from the index first so the content is committed as real files.
+          for d in KernelSU; do
+            if git ls-files --error-unmatch "$d" >/dev/null 2>&1; then
+              git rm -r --cached --quiet "$d" && echo "dropped gitlink: $d"
+            fi
+          done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
