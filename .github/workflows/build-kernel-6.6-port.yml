@@ -338,6 +338,11 @@ jobs:
           if ! grep -q 'config VIDEO_OV50E' drivers/media/i2c/Kconfig; then
             printf 'config VIDEO_OV50E\n\ttristate "OmniVision OV50E sensor support"\n\tdepends on I2C && VIDEO_DEV\n\tselect MEDIA_CONTROLLER\n\tselect VIDEO_V4L2_SUBDEV_API\n\tselect V4L2_FWNODE\n\thelp\n\t  OmniVision OV50E 50MP sensor (Redmi K70 main camera).\n' >> drivers/media/i2c/Kconfig
           fi
+          # 1d) Camera phase 1 DT: vermeer camss/cci/camcc/ov50e test DTB.
+          #    Stock DTBs ship zero camera nodes (Xiaomi stripped them), so
+          #    this test DT re-creates the platform nodes from upstream.
+          cp "$GITHUB_WORKSPACE/port-6.6/vermeer-camss-test.dts" arch/arm64/boot/dts/qcom/sm8550-vermeer-camss-test.dts
+          grep -q 'vermeer-camss-test' arch/arm64/boot/dts/qcom/Makefile ||             echo 'dtb-$(CONFIG_ARCH_QCOM) += sm8550-vermeer-camss-test.dtb' >> arch/arm64/boot/dts/qcom/Makefile
           # 2) qtee_shmbridge: lives in drivers/firmware/ in 5.15, outside the
           #    rsync set. Copy it and hook it into the qcom-scm composite set
           #    (6.6 uses qcom-scm-y) plus its Kconfig block.
@@ -670,6 +675,10 @@ jobs:
           make $KFLAG -j"$(nproc)" O=out ARCH=arm64 LLVM=1 \
                KCFLAGS='-Wno-error=implicit-int -Wno-error=implicit-function-declaration -Wno-error=strict-prototypes -Wno-error=int-conversion' \
                Image modules < /dev/null 2>&1 | tee -a build.log || build_failed=1
+          # Camera test DTB: build standalone so a dts error never blocks
+          # the kernel build; report but tolerate failure for now.
+          make O=out ARCH=arm64 LLVM=1 qcom/sm8550-vermeer-camss-test.dtb 2>&1 | tail -n 5 || true
+          ls -lh out/arch/arm64/boot/dts/qcom/sm8550-vermeer-camss-test.dtb 2>/dev/null || echo "NO TEST DTB"
           echo "=== build output ==="
           ls -lh out/arch/arm64/boot/Image 2>/dev/null || echo "NO IMAGE"
           find out -name '*.ko' 2>/dev/null | wc -l
@@ -696,6 +705,7 @@ jobs:
           cp out/arch/arm64/boot/Image "$A/" 2>/dev/null || echo "NO IMAGE"
           cp out/System.map "$A/" 2>/dev/null || true
           cp out/.config "$A/kernel.config" 2>/dev/null || true
+          cp out/arch/arm64/boot/dts/qcom/sm8550-vermeer-camss-test.dtb "$A/" 2>/dev/null || true
           find out -name '*.ko' | while read -r k; do
             rel="${k#out/}"
             mkdir -p "$A/$(dirname "$rel")"
