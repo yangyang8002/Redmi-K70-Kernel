@@ -537,63 +537,63 @@ jobs:
           echo "MARK-A cd ok, PWD=$(pwd)"
           bash ./scripts/config --file out/.config -d WERROR; echo "MARK-B werror rc=$?"
           case "$LTO_MODE" in
-            thin) ./scripts/config --file out/.config -d LTO_NONE -e LTO_CLANG_THIN ;;
-            full) ./scripts/config --file out/.config -d LTO_NONE -e LTO_CLANG_FULL ;;
-            *) ./scripts/config --file out/.config -d LTO_CLANG_FULL -d LTO_CLANG_THIN -e LTO_NONE ;;
+            thin) bash ./scripts/config --file out/.config -d LTO_NONE -e LTO_CLANG_THIN ;;
+            full) bash ./scripts/config --file out/.config -d LTO_NONE -e LTO_CLANG_FULL ;;
+            *) bash ./scripts/config --file out/.config -d LTO_CLANG_FULL -d LTO_CLANG_THIN -e LTO_NONE ;;
           esac
           # GKI disables CONFIG_MODULE_UNLOAD, but the vermeer driver stack
           # (gunyah vm_mgr.c) references module_refcount() which only exists
           # when unloading is compiled in. Enable it.
-          ./scripts/config --file out/.config -e MODULE_UNLOAD
+          bash ./scripts/config --file out/.config -e MODULE_UNLOAD
           # 5.15-private rpmsg API (ept->rx_done etc.) was removed in 6.6 and
           # glink_pkt.ko is not in the official vermeer module list: skip it.
-          ./scripts/config --file out/.config -d QCOM_GLINK_PKT
+          bash ./scripts/config --file out/.config -d QCOM_GLINK_PKT
           # The 5.15 BSP clock drivers (gcc/camcc/dispcc/tcsrcc/video/debugcc-
           # kalama) depend on Qualcomm's private vdd-regulator header stack,
           # which does not exist in 6.6. Use the upstream sm8550 clock drivers
           # instead - they match the same DTB clock node compatibles.
-          ./scripts/config --file out/.config \
+          bash ./scripts/config --file out/.config \
             -d SM_GCC_KALAMA -d SM_CAMCC_KALAMA -d SM_DISPCC_KALAMA \
             -d SM_TCSRCC_KALAMA -d SM_VIDEOCC_KALAMA -d SM_DEBUGCC_KALAMA
-          ./scripts/config --file out/.config \
+          bash ./scripts/config --file out/.config \
             -m SM_GCC_8550 -m SM_CAMCC_8550 -m SM_DISPCC_8550 \
             -m SM_GPUCC_8550 -m SM_VIDEOCC_8550 || true
           # 5.15 pmic_glink client struct differs from 6.6's; battery debug
           # is not in the official vermeer module list - skip it.
-          ./scripts/config --file out/.config -d QTI_BATTERY_GLINK_DEBUG
+          bash ./scripts/config --file out/.config -d QTI_BATTERY_GLINK_DEBUG
           # Same 5.15 pmic_glink client-data layout, same reasoning: the
           # charger-ulog and altmode glink clients are debug facilities that
           # are not in the official vermeer module list - skip them too.
-          ./scripts/config --file out/.config \
+          bash ./scripts/config --file out/.config \
             -d QTI_CHARGER_ULOG_GLINK -d QTI_ALTMODE_GLINK
           # ... and the spmi glink debug client - same story.
-          ./scripts/config --file out/.config -d SPMI_QTI_GLINK_DEBUG
+          bash ./scripts/config --file out/.config -d SPMI_QTI_GLINK_DEBUG
           # minidump_memory.c (the panic-dump collector of the minidump set)
           # needs 5.15-private MM internals (struct track.addrs, dma_resv
           # seq/fence, slab internals, ADS_* symbols, PAGE_OWNER); it is a
           # panic-time debug feature - drop it from the minidump set.
-          ./scripts/config --file out/.config -d QCOM_MINIDUMP_PANIC_DUMP
+          bash ./scripts/config --file out/.config -d QCOM_MINIDUMP_PANIC_DUMP
           # qcom_iommu_util (official module list member) is the 5.15
           # fast-pgtable/lazy-mapping IOMMU performance layer; porting it
           # would mean porting the whole 5.15 IOMMU core API (which 6.6
           # restructured around iommu_domain_ops) and would break the
           # already-working 6.6 arm-smmu. Base mapping is provided by
           # arm-smmu; disable the accelerator and document the loss.
-          ./scripts/config --file out/.config -d QCOM_IOMMU_UTIL
+          bash ./scripts/config --file out/.config -d QCOM_IOMMU_UTIL
           # qcom_esoc (external-modem framework) is not on vermeer's official
           # module list and its mdm-pon members need 5.15-private headers;
           # SM8550 has no external MDM modem. Disable.
-          ./scripts/config --file out/.config -d QCOM_ESOC
+          bash ./scripts/config --file out/.config -d QCOM_ESOC
           # The 5.15 kalama.c interconnect platform driver uses the 5.15
           # qcom_icc_node layout (noc_ops/qosbox) which 6.6 restructured.
           # Use the upstream sm8550.c platform driver instead (same as the
           # upstream clock switch above); icc-rpmh/bcm-voter already build.
-          ./scripts/config --file out/.config -d INTERCONNECT_QCOM_KALAMA
-          ./scripts/config --file out/.config -m INTERCONNECT_QCOM_SM8550
+          bash ./scripts/config --file out/.config -d INTERCONNECT_QCOM_KALAMA
+          bash ./scripts/config --file out/.config -m INTERCONNECT_QCOM_SM8550
           # crow.c / kaka.c are the same 5.15-layout platform drivers for
           # other SoCs (not vermeer); they hit the same icc_node rework.
-          ./scripts/config --file out/.config -d INTERCONNECT_QCOM_CROW
-          ./scripts/config --file out/.config -d INTERCONNECT_QCOM_KAKA
+          bash ./scripts/config --file out/.config -d INTERCONNECT_QCOM_CROW
+          bash ./scripts/config --file out/.config -d INTERCONNECT_QCOM_KAKA
           # modpost: these 5.15 modules (none on the official list) reference
           # 5.15-private symbols (qcom_scm_assign_mem_regions,
           # qtee_shmbridge_*, subsystem_sleep_debug_enable,
@@ -601,39 +601,39 @@ jobs:
           # that do not exist in the 6.6 tree. Disable them.
           # QCOM_SECURE_BUFFER / QCOM_WDT_CORE / QCOM_MEMORY_DUMP_V2 re-enabled:
           # their qcom_scm deps are now ported (fix 56 extraction above).
-          ./scripts/config --file out/.config -d QTI_SYS_PM_VX
-          ./scripts/config --file out/.config -d QCOM_CPU_VENDOR_HOOKS
+          bash ./scripts/config --file out/.config -d QTI_SYS_PM_VX
+          bash ./scripts/config --file out/.config -d QCOM_CPU_VENDOR_HOOKS
           # The 5.15 mem-hooks/mem-offline drivers depend on Qualcomm's
           # private 5.15 MM internals (mkswapd array, MAX_KSWAPD_THREADS)
           # that do not exist in 6.6 MM: skip them.
-          ./scripts/config --file out/.config \
+          bash ./scripts/config --file out/.config \
             -d QCOM_MEM_HOOKS -d QCOM_MEM_OFFLINE
           # llcc_perfmon uses the 5.15 llcc_drv_data layout (single regmap,
           # llcc_ver, offsets); 6.6 upstream restructured it to regmaps[] -
           # perfmon is a debug facility, not in the official module list.
-          ./scripts/config --file out/.config -d QCOM_LLCC_PERFMON
+          bash ./scripts/config --file out/.config -d QCOM_LLCC_PERFMON
           # core_hang_detect touches bus_type.dev_root, removed in 6.6; it
           # is a debug facility not in the official vermeer module list.
-          ./scripts/config --file out/.config -d MSM_CORE_HANG_DETECT
+          bash ./scripts/config --file out/.config -d MSM_CORE_HANG_DETECT
           # qdss_bridge uses the 5.15-private MHI API (MHI_MAX_MTU, two-arg
           # mhi calls); it is a debug facility not in the official list.
-          ./scripts/config --file out/.config -d QCOM_QDSS_BRIDGE
+          bash ./scripts/config --file out/.config -d QCOM_QDSS_BRIDGE
           # In 5.15 the QTI_HW_KEY_MANAGER_V1 inline stubs and the real
           # crypto-qti-hwkm functions are mutually exclusive; after the
           # merge both got enabled and collide. Keep the real driver
           # (official module list member), drop the V1 stubs.
-          ./scripts/config --file out/.config -d QTI_HW_KEY_MANAGER_V1
+          bash ./scripts/config --file out/.config -d QTI_HW_KEY_MANAGER_V1
           # CONFIG_QTI_CRYPTO_COMMON gates crypto-qti-platform.h between real
           # declarations and -EOPNOTSUPP stubs; if it gets dropped at
           # olddefconfig the stubs collide with the real hwkm functions.
           # Force it on (it is also an official module: crypto-qti-common).
-          ./scripts/config --file out/.config -m QTI_CRYPTO_COMMON  # must stay =m: built-in common would reference modular hwkm symbols
+          bash ./scripts/config --file out/.config -m QTI_CRYPTO_COMMON  # must stay =m: built-in common would reference modular hwkm symbols
           # Batch: every soc/qcom target that is fragment=m, NOT in the
           # official vermeer module list, and built on 5.15-private
           # frameworks (sleep-stats collectors, dump collectors, BAM/SPS
           # DMA, slate/tmecom, panel event, hung-task enh, etc). Skipping
           # all of them does not reduce official module coverage.
-          ./scripts/config --file out/.config \
+          bash ./scripts/config --file out/.config \
             -d QCOM_CPUSS_SLEEP_STATS -d MEM_SHARE_QMI_SERVICE \
             -d QCOM_SMP2P_SLEEPSTATE -d QSEE_IPC_IRQ_BRIDGE -d QCOM_GLINK \
             -d QCOM_CDSP_RM -d QCOM_SYSMON_SUBSYSTEM_STATS \
@@ -685,12 +685,12 @@ jobs:
           # Upstream replacements for 5.15-private thermal/watchdog drivers
           # (qcom_tsens/qcom_wdt_core are not portable; the upstream SM8550
           # capable drivers must be enabled or thermal protection is blind).
-          ./scripts/config --file out/.config -e NVMEM_QCOM_QFPROM -e QCOM_TSENS -e QCOM_WDT
+          bash ./scripts/config --file out/.config -e NVMEM_QCOM_QFPROM -e QCOM_TSENS -e QCOM_WDT
           # Camera phase 0: upstream camss has SM8550 support (vfe-480 +
           # csiphy-3ph). QTI camera-kernel is closed everywhere (verified:
           # MiCode vermeer/fuxi, OnePlusOSS sm8550 all lack it), so camss +
           # libcamera is the only route. cci = camera I2C master.
-          ./scripts/config --file out/.config -m VIDEO_QCOM_CAMSS -m I2C_QCOM_CCI -m SM_CAMCC_8550 -m VIDEO_OV50E
+          bash ./scripts/config --file out/.config -m VIDEO_QCOM_CAMSS -m I2C_QCOM_CCI -m SM_CAMCC_8550 -m VIDEO_OV50E
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
           KFLAG=""
           [ "$KEEP_GOING" = "true" ] && KFLAG="-k"
