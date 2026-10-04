@@ -321,6 +321,12 @@
 
 				port@5 {
 					reg = <5>;
+
+					csiphy5_ep: endpoint {
+						remote-endpoint = <&ov50e_ep>;
+						/* OV50E main: 4-lane CSI-2 (D-PHY on csiphy5) */
+						data-lanes = <0 1 2 3>;
+					};
 				};
 
 				port@6 {
