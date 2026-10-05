@@ -190,4 +190,4 @@ obj-$(CONFIG_MSM_GPUCC_WAIPIO) += gpucc-waipio.o
 obj-$(CONFIG_MSM_DISPCC_WAIPIO) += dispcc-waipio.o
 obj-$(CONFIG_MSM_DEBUGCC_WAIPIO) += debugcc-waipio.o
 obj-$(CONFIG_VIRTIO_CLK) += virtio_clk.o virtio_clk_sm8150.o virtio_clk_direwolf.o
- += camcc-sm8550.o
+obj-$(CONFIG_SM_CAMCC_8550) += camcc-sm8550.o
