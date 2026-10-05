@@ -1,0 +1,43 @@
+name: Inspect stock vendor DTB (camera merge recon)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dtc + gh
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq device-tree-compiler
+
+      - name: Fetch stock vendor_boot.dtb
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download test-assets -R ${{ github.repository }} -p 'vendor_boot.dtb' --clobber
+
+      - name: Decompile and survey camera-related nodes
+        run: |
+          dtc -I dtb -O dts -s vendor_boot.dtb -o stock.dts 2>dtc-warn.txt || true
+          ls -la stock.dts dtc-warn.txt
+          wc -l stock.dts
+          echo "=== node definitions (label: node@addr) for camera blocks ==="
+          grep -nE '^\s*(camcc|cci|camss|isp|csiphy|actuator|eeprom|ois|flash)\w*: ' stock.dts | head -40 || true
+          echo "=== any camss/isp/csiphy mentions at all ==="
+          grep -nic 'camss\|csiphy\|cam_\|camera' stock.dts || true
+          echo "=== camcc node block (first 60 lines from its definition) ==="
+          awk '/camcc: clock-controller@/{f=1} f{print NR": "$0; n++} n>60{exit}' stock.dts || echo "no camcc node"
+          echo "=== cci node(s) ==="
+          grep -n 'cci' stock.dts | head -20 || true
+          echo "=== i2c aliases (which i2c buses exist) ==="
+          grep -nE 'i2c[0-9]+ = ' stock.dts | head -30 || true
+          echo "=== qupv3 i2c nodes with camera-ish children ==="
+          grep -nE 'i2c@' stock.dts | head -30 || true
+
+      - name: Upload decompiled stock.dts
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-dts
+          path: |
+            stock.dts
+            dtc-warn.txt
+          if-no-files-found: ignore
