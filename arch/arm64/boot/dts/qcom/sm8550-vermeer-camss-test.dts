@@ -437,3 +437,43 @@
 				};
 			};
 };
+
+/* Boot-critical enables. The upstream sm8550.dtsi ships these nodes
+ * disabled (a board dts normally enables them); vermeer needs them all
+ * for first boot: UFS storage, USB (adb - the only debug channel with
+ * msm_drm display absent), and the geni console UART.
+ */
+
+&ufs_mem_phy {
+	status = "okay";
+};
+
+&ufs_mem_hc {
+	status = "okay";
+};
+
+&usb_1_hsphy {
+	status = "okay";
+};
+
+&usb_dp_qmpphy {
+	status = "okay";
+};
+
+&usb_1 {
+	status = "okay";
+};
+
+&uart7 {
+	status = "okay";
+};
+
+/ {
+	aliases {
+		serial0 = &uart7;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+};
