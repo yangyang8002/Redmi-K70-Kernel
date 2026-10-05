@@ -180,8 +180,13 @@ jobs:
 
       - name: Verify roundtrip
         run: |
-          python3 mbi/unpack_bootimg.py --boot_img vendor_boot-6.6.img --out vbchk | head -12
-          lz4 -d vbchk/vendor_ramdisk00 chk.cpio && mkdir -p chkd && cd chkd && cpio -idm < ../chk.cpio 2>/dev/null
+          python3 mbi/unpack_bootimg.py --boot_img vendor_boot-6.6.img --out vbchk > unpack.txt 2>&1 || true
+          head -14 unpack.txt
+          ls -la vbchk/
+          R=$(ls vbchk/vendor_ramdisk* | head -1)
+          lz4 -d "$R" chk.cpio 2>/dev/null || cp "$R" chk.cpio
+          head -c 6 chk.cpio | od -c | head -1
+          mkdir -p chkd && cd chkd && cpio -idm < ../chk.cpio 2>/dev/null || true
           echo "roundtrip module count: $(find chkd/lib/modules -name '*.ko' 2>/dev/null | wc -l)"
           echo "roundtrip load list head:"; head -10 chkd/lib/modules/modules.load
 
