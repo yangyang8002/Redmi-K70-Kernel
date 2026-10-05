@@ -78,7 +78,7 @@ obj-$(CONFIG_QCOM_MEMORY_DUMP_V2) += memory_dump_v2.o
 obj-$(CONFIG_QCOM_DCC_V2) += dcc_v2.o
 obj-$(CONFIG_QCOM_MICRODUMP) += microdump_collector.o
 obj-$(CONFIG_QCOM_LLCC_PERFMON) += llcc_perfmon.o
-obj-$(CONFIG_QCOM_RPMHPD) += rpmhpd.o
+# vendor rpmhpd disabled: name-conflicts with upstream drivers/pmdomain/qcom/rpmhpd.ko (CONFIG_QCOM_RPMHPD)
 obj-$(CONFIG_MSM_CDSP_LOADER) += qdsp6v2/
 obj-$(CONFIG_QCOM_RPMPD) += rpmpd.o
 obj-$(CONFIG_QPNP_PBS) += qpnp-pbs.o
