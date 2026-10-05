@@ -695,7 +695,32 @@ jobs:
           # MiCode vermeer/fuxi, OnePlusOSS sm8550 all lack it), so camss +
           # libcamera is the only route. cci = camera I2C master.
           bash ./scripts/config --file out/.config -m VIDEO_QCOM_CAMSS -m I2C_QCOM_CCI -m SM_CAMCC_8550 -m VIDEO_OV50E
+          # Strategy B: the upstream test DTB becomes the vendor_boot DTB,
+          # so every boot-critical upstream driver must exist as a module:
+          # tcsrcc provides the CLKREF clocks for USB/UFS phys; eusb2 +
+          # qmp-combo phys are required by the built-in dwc3; qmp-ufs for
+          # ufshc; rpmhpd power domains; pinctrl-sm8550 for tlmm.
+          bash ./scripts/config --file out/.config \
+            -m SM_TCSRCC_8550 \
+            -m PHY_QCOM_QMP -m PHY_QCOM_QMP_COMBO -m PHY_QCOM_QMP_UFS \
+            -m PHY_QCOM_QMP_USB -m PHY_QCOM_SNPS_EUSB2 \
+            -m PHY_QCOM_EUSB2_REPEATER \
+            -m QCOM_RPMHPD -m PINCTRL_SM8550 || true
           make O=out ARCH=arm64 LLVM=1 olddefconfig < /dev/null
+          echo "=== SYMBOL SURVIVAL CHECK (post olddefconfig #2) ==="
+          for sym in SM_GCC_8550 SM_CAMCC_8550 SM_DISPCC_8550 SM_GPUCC_8550 \
+                      SM_VIDEOCC_8550 SM_TCSRCC_8550 INTERCONNECT_QCOM_SM8550 \
+                      PHY_QCOM_QMP PHY_QCOM_QMP_COMBO PHY_QCOM_QMP_UFS \
+                      PHY_QCOM_QMP_USB PHY_QCOM_SNPS_EUSB2 \
+                      PHY_QCOM_EUSB2_REPEATER QCOM_RPMHPD PINCTRL_SM8550 \
+                      VIDEO_QCOM_CAMSS I2C_QCOM_CCI VIDEO_OV50E; do
+            grep -E "^CONFIG_${sym}=" out/.config || echo "SYMBOL-LOST: $sym"
+          done
+          echo "=== where is PINCTRL_SM8550 defined? ==="
+          grep -rn "config PINCTRL_SM8550" --include=Kconfig* . || echo "NO KCONFIG DEFINES PINCTRL_SM8550"
+          echo "=== camcc-sm8550 presence ==="
+          ls -l drivers/clk/qcom/camcc-sm8550.c 2>/dev/null || echo "NO camcc-sm8550.c"
+          grep -n "sm8550" drivers/clk/qcom/Makefile || true
           KFLAG=""
           [ "$KEEP_GOING" = "true" ] && KFLAG="-k"
           find . -not -path './out*' -exec touch -d @0 {} + 2>/dev/null || true
@@ -732,6 +757,7 @@ jobs:
           rm -rf "$A" && mkdir -p "$A"
           cp out/arch/arm64/boot/Image "$A/" 2>/dev/null || echo "NO IMAGE"
           cp out/System.map "$A/" 2>/dev/null || true
+          cp out/Module.symvers "$A/" 2>/dev/null || true
           cp out/.config "$A/kernel.config" 2>/dev/null || true
           cp out/arch/arm64/boot/dts/qcom/sm8550-vermeer-camss-test.dtb "$A/" 2>/dev/null || true
           find out -name '*.ko' | while read -r k; do
