@@ -186,7 +186,8 @@ jobs:
           R=$(ls vbchk/vendor_ramdisk* | head -1)
           lz4 -d "$R" chk.cpio 2>/dev/null || cp "$R" chk.cpio
           head -c 6 chk.cpio | od -c | head -1
-          mkdir -p chkd && cd chkd && cpio -idm < ../chk.cpio 2>/dev/null || true
+          mkdir -p chkd
+          (cd chkd && cpio -idm < ../chk.cpio 2>/dev/null || true)
           echo "roundtrip module count: $(find chkd/lib/modules -name '*.ko' 2>/dev/null | wc -l)"
           echo "roundtrip load list head:"; head -10 chkd/lib/modules/modules.load
 
