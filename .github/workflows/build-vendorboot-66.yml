@@ -15,9 +15,11 @@ jobs:
       - name: Install tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq lz4 cpio kmod
 
-      - name: Get AOSP mkbootimg tools
+      - name: Get AOSP mkbootimg tools (release asset, googlesource fallback)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -sL -o mbi.tar.gz 'https://android.googlesource.com/platform/system/tools/mkbootimg/+archive/refs/heads/main.tar.gz'
+          gh release download test-assets -R ${{ github.repository }} -p 'mbi.tar.gz' -O mbi.tar.gz --clobber || curl -sL -o mbi.tar.gz 'https://android.googlesource.com/platform/system/tools/mkbootimg/+archive/refs/heads/main.tar.gz'
           mkdir -p mbi && tar -xzf mbi.tar.gz -C mbi
           ls mbi/*.py
 
