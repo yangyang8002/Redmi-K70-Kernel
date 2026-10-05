@@ -1,4 +1,4 @@
-name: Build test vendor_boot (6.6 module swap)
+name: Build test vendor_boot v3 (6.6 full swap + upstream DTB)
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install tools
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq lz4 cpio
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lz4 cpio kmod
 
       - name: Get AOSP mkbootimg tools
         run: |
@@ -39,6 +39,7 @@ jobs:
           echo "port run: $RID" | tee port_run_id.txt
           gh run download "$RID" -R ${{ github.repository }} -p 'port-output-*' -D portout
           echo "our module count: $(find portout -name '*.ko' | wc -l)"
+          find portout -name 'sm8550-vermeer-camss-test.dtb' -o -name 'System.map' -o -name 'Module.symvers' | sort
 
       - name: Unpack stock vendor_boot and ramdisk
         run: |
@@ -48,45 +49,130 @@ jobs:
           mkdir -p vr && cd vr && cpio -idm < ../vendor_ramdisk.cpio 2>/dev/null
           echo "ramdisk files: $(find . -type f | wc -l)"
 
-      - name: Survey stock module layout and load lists
+      - name: Full module swap + depmod metadata + dep-ordered load lists
         run: |
-          echo "=== ALL stock ramdisk files ===" || true
-          find vr -type f | sort || true
-          echo "=== modules.load* contents ==="
-          for f in $(find vr -name 'modules.load*' 2>/dev/null); do echo "--- $f"; cat "$f"; done || true
-          echo "=== insmod/modprobe refs ==="
-          grep -rn 'insmod\|modprobe' vr --include='*.rc' --include='*.sh' 2>/dev/null | head -40 || true
-          echo "=== our 6.6 module basenames ==="
-          find portout -name '*.ko' -printf '%f\n' | sort || true
+          set -e
+          cd "${GITHUB_WORKSPACE}"
+          # wipe stock modules and generated metadata (keep modules.blocklist)
+          find vr/lib/modules -maxdepth 1 -name '*.ko' -delete || true
+          rm -f vr/lib/modules/modules.dep vr/lib/modules/modules.alias \
+                vr/lib/modules/modules.softdep vr/lib/modules/modules.symbols \
+                vr/lib/modules/modules.devname vr/lib/modules/modules.builtin \
+                vr/lib/modules/modules.builtin.alias 2>/dev/null || true
+          # copy our modules flat
+          find portout -name '*.ko' -exec cp {} vr/lib/modules/ \;
+          echo "our modules in ramdisk: $(ls vr/lib/modules/*.ko | wc -l)"
+          # kernel release from vermagic
+          KREL=$(modinfo -F vermagic "$(ls vr/lib/modules/*.ko | head -1)" | awk '{print $1}')
+          echo "kernel release: $KREL"
+          echo "$KREL" > krel.txt
+          # depmod into staging dir with our System.map for built-in exports
+          mkdir -p "depstaging/lib/modules/$KREL"
+          cp vr/lib/modules/*.ko "depstaging/lib/modules/$KREL/"
+          SMAP=$(find portout -name 'System.map' | head -1)
+          cp "$SMAP" depstaging/System.map
+          depmod -b depstaging "$KREL" || true
+          ls "depstaging/lib/modules/$KREL/"
+          python3 - <<'PYEOF'
+          import os, re, sys, collections
+          KREL = open('krel.txt').read().strip()
+          src = os.path.join('depstaging', 'lib', 'modules', KREL)
+          dst = os.path.join('vr', 'lib', 'modules')
 
-      - name: Swap matching modules with 6.6 builds
-        run: |
-          find portout -name '*.ko' > ours.txt
-          replaced=0; kept=0
-          while read -r kofile; do
-            base=$(basename "$kofile")
-            ours=$(grep "/$base$" ours.txt | head -1 || true)
-            if [ -n "$ours" ]; then cp "$ours" "$kofile" && replaced=$((replaced+1));
-            else kept=$((kept+1)); echo "NO-6.6-BUILD: $kofile"; fi
-          done < <(find vr/lib/modules -name '*.ko' 2>/dev/null)
-          echo "replaced=$replaced kept-stock=$kept"
-          echo "=== vermagic of a swapped module ==="
-          strings $(find vr/lib/modules -name '*.ko' | head -1) | grep -m1 vermagic || true
+          def fix_line(line):
+              line = line.rstrip('\n')
+              return re.sub(r'(?<![\w/])(\S+\.ko)(?=:|\s|$)', r'/lib/modules/\1', line)
+
+          for fn in ('modules.dep', 'modules.alias', 'modules.symbols', 'modules.devname'):
+              p = os.path.join(src, fn)
+              if not os.path.exists(p):
+                  continue
+              out = [fix_line(l) for l in open(p)]
+              open(os.path.join(dst, fn), 'w').write('\n'.join(out) + '\n')
+
+          p = os.path.join(src, 'modules.softdep')
+          if os.path.exists(p):
+              open(os.path.join(dst, 'modules.softdep'), 'w').write(open(p).read())
+
+          # topological load order from the generated modules.dep
+          deps = {}
+          for line in open(os.path.join(dst, 'modules.dep')):
+              line = line.strip()
+              if not line:
+                  continue
+              if ':' in line:
+                  name, d = line.split(':', 1)
+                  name = name.strip()
+                  dl = [x.strip() for x in d.split() if x.strip()]
+              else:
+                  name, dl = line, []
+              deps[name] = dl
+
+          PRIO = ['cmd-db', 'qcom_rpmh', 'smem', 'qcom_scm', 'qcom_aoss',
+                  'clk-rpmh', 'clk-qcom', 'gcc-sm8550', 'tcsrcc-sm8550', 'rpmhpd',
+                  'icc-bcm-voter', 'icc-rpmh', 'qnoc-sm8550',
+                  'pinctrl-msm', 'pinctrl-kalama', 'pinctrl-crow',
+                  'spmi-pmic-arb', 'qcom-spmi-pmic', 'qcom-pdc', 'qrtr',
+                  'qcom-cpufreq-hw', 'arm_smmu', 'gdsc-regulator',
+                  'qcom_q6v5_pas', 'qcom_sysmon',
+                  'phy-qcom-qmp-ufs', 'phy-qcom-ufs-qmp-v4-kalama', 'ufs-qcom',
+                  'phy-qcom-eusb2-repeater', 'phy-qcom-snps-eusb2', 'phy-qcom-qmp-combo',
+                  'qcom-camss', 'i2c-qcom-cci', 'ov50e', 'camcc-sm8550', 'synx-driver']
+
+          def key(name):
+              stem = name.rsplit('/', 1)[-1]
+              if stem.endswith('.ko'):
+                  stem = stem[:-3]
+              for i, p in enumerate(PRIO):
+                  if stem == p:
+                      return (0, i)
+              return (1, stem)
+
+          remaining = dict(deps)
+          resolved = set()
+          order = []
+          while remaining:
+              ready = [n for n, d in remaining.items() if all(x in resolved for x in d)]
+              if not ready:
+                  ready = [sorted(remaining, key=key)[0]]
+                  print('CYCLE-BREAK: ' + ready[0], file=sys.stderr)
+              ready.sort(key=key)
+              for n in ready:
+                  order.append(n)
+                  resolved.add(n)
+                  del remaining[n]
+
+          names = [x.rsplit('/', 1)[-1] for x in order]
+          open(os.path.join(dst, 'modules.load'), 'w').write('\n'.join(names) + '\n')
+          open(os.path.join(dst, 'modules.load.recovery'), 'w').write('\n'.join(names) + '\n')
+          print('=== modules.load order (first 40 of %d) ===' % len(names))
+          print('\n'.join(names[:40]))
+          bl = open(os.path.join(dst, 'modules.blocklist')).read().split()
+          blset = set(l for l in bl if l and not l.startswith('#') and l != 'blocklist')
+          hits = [n for n in names if n[:-3] in blset]
+          print('=== blocklist hits among ours: %r ===' % hits)
+          PYEOF
+          echo "=== final lib/modules metadata ==="
+          ls -la vr/lib/modules/ | head -20
+          echo "load list entries: $(wc -l < vr/lib/modules/modules.load)"
 
       - name: Repack ramdisk (newc + lz4 legacy)
         run: |
           cd vr && find . | cpio -o -H newc 2>/dev/null | lz4 -l -9 > ../vendor_ramdisk66.cpio.lz4
           ls -la ../vendor_ramdisk66.cpio.lz4
 
-      - name: Rebuild vendor_boot.img
+      - name: Rebuild vendor_boot.img (upstream DTB)
         run: |
+          DTB=$(find portout -name 'sm8550-vermeer-camss-test.dtb' | head -1)
+          if [ -z "$DTB" ]; then echo "!! OUR DTB MISSING - falling back to stock"; cp vendor_boot.dtb our.dtb; else cp "$DTB" our.dtb; fi
+          ls -la our.dtb
           python3 mbi/mkbootimg.py \
             --header_version 4 \
             --vendor_boot vendor_boot-6.6.img \
             --vendor_ramdisk vendor_ramdisk66.cpio.lz4 \
             --vendor_bootconfig vbu/bootconfig \
             --vendor_cmdline "video=vfb:640x400,bpp=32,memsize=3072000 disable_dma32=on swinfo.fingerprint=vermeer:13/OS3.0.307.0.WNKCNXM:user mtdoops.fingerprint=vermeer:13/OS3.0.307.0.WNKCNXM:user bootconfig" \
-            --dtb vendor_boot.dtb \
+            --dtb our.dtb \
             --base 0 --pagesize 0x1000
           ls -la vendor_boot-6.6.img
 
@@ -95,6 +181,7 @@ jobs:
           python3 mbi/unpack_bootimg.py --boot_img vendor_boot-6.6.img --out vbchk | head -12
           lz4 -d vbchk/vendor_ramdisk00 chk.cpio && mkdir -p chkd && cd chkd && cpio -idm < ../chk.cpio 2>/dev/null
           echo "roundtrip module count: $(find chkd/lib/modules -name '*.ko' 2>/dev/null | wc -l)"
+          echo "roundtrip load list head:"; head -10 chkd/lib/modules/modules.load
 
       - name: Upload
         uses: actions/upload-artifact@v4
@@ -103,4 +190,7 @@ jobs:
           path: |
             vendor_boot-6.6.img
             port_run_id.txt
+            vr/lib/modules/modules.load
+            vr/lib/modules/modules.dep
+            our.dtb
           if-no-files-found: error
